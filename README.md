@@ -2,11 +2,22 @@
 
 Basic Idea:
 
-This framework would enable you to run a website which hosts a large compute job. (ex: large physics problem, train a neural network etc.) 
+This framework would enable you to run a website which hosts a large compute job. (ex: large physics problem, train a neural network, explore a procedurally generated world with other people in real time. ) 
 
 When clients connect to your website they will join the compute network and help work on the job. 
 
+
 Basic Arch:
+
+
+Signaling server:
+
+Super Node (group master)
+
+Node
+
+
+
 
 Root Workload Server
 
