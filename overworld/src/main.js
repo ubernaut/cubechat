@@ -40,6 +40,11 @@ class TronOverworld {
         localPlayer.position
       );
       this.scene.setLocalPlayer(localPlayer.id);
+      
+      // Apply local video stream to own cube
+      if (this.network.getLocalStream()) {
+        this.scene.setPlayerVideoStream(localPlayer.id, this.network.getLocalStream());
+      }
 
       // Initialize player controller
       this.controller = new PlayerController();

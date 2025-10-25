@@ -155,14 +155,17 @@ export class TronScene {
     cube.userData.videoTexture = null;
     cube.userData.videoElement = null;
 
-    // Add glow effect (proportionally bigger)
+    // Add glow effect (proportionally bigger, offset back by 1.4 units)
     const glowGeometry = new THREE.BoxGeometry(7.2, 7.2, 7.2);
     const glowMaterial = new THREE.MeshBasicMaterial({
       color: color,
+      emissive: color,
+      emissiveIntensity: 1,
       transparent: true,
       opacity: 0.3
     });
     const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    //glow.position.z = 1.4; // Offset back so front of cube sticks through
     cube.add(glow);
 
     this.scene.add(cube);

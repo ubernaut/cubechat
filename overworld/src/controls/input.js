@@ -247,11 +247,11 @@ export class PlayerController {
       }
     } else {
       // Use keyboard for desktop
-      // Forward/backward
-      if (this.keys['w']) {
+      // Forward/backward (W/S and Up/Down arrows)
+      if (this.keys['w'] || this.keys['arrowup']) {
         forwardBack = 1;  // Move forward
       }
-      if (this.keys['s']) {
+      if (this.keys['s'] || this.keys['arrowdown']) {
         forwardBack = -1; // Move backward
       }
       
@@ -263,11 +263,11 @@ export class PlayerController {
         leftRight = 1;    // Strafe right
       }
       
-      // Apply rotation from arrow keys
-      if (this.keys['arrowleft']) {
+      // Apply rotation from arrow keys and Q/E (left/right only)
+      if (this.keys['arrowleft'] || this.keys['q']) {
         this.rotation += this.turnSpeed;
       }
-      if (this.keys['arrowright']) {
+      if (this.keys['arrowright'] || this.keys['e']) {
         this.rotation -= this.turnSpeed;
       }
     }
