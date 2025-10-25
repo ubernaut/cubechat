@@ -110,14 +110,74 @@ class TronOverworld {
 
       // Update remote player position and rotation
       this.scene.updatePlayer(peerId, data.position, data.rotation);
+      
+      // Update proximity audio
+      this.updateProximityAudio(peerId, data.position);
     } else if (message.type === 'player_leave') {
       const { peerId } = message;
       
       if (this.remotePlayers.has(peerId)) {
         this.scene.removePlayer(peerId);
         this.remotePlayers.delete(peerId);
+        
+        // Clean up audio element
+        const audio = document.getElementById(`audio-${peerId}`);
+        if (audio) {
+          audio.remove();
+        }
+        
         console.log('Player left:', peerId);
       }
+    } else if (message.type === 'stream_added') {
+      // Apply video stream to player cube
+      this.scene.setPlayerVideoStream(message.peerId, message.stream);
+    } else if (message.type === 'stream_removed') {
+      // Remove video texture from cube (revert to colored cube)
+      this.scene.removePlayerVideoStream(message.peerId);
+      
+      // Clean up audio element
+      const audio = document.getElementById(`audio-${message.peerId}`);
+      if (audio) {
+        audio.remove();
+      }
+    }
+  }
+
+  updateProximityAudio(peerId, remotePosition) {
+    const stream = this.network.getRemoteStream(peerId);
+    if (!stream) return;
+
+    const localPos = this.scene.getLocalPlayerPosition();
+    if (!localPos) return;
+
+    // Calculate distance between players (grid squares are 10 units)
+    const dx = remotePosition.x - localPos.x;
+    const dz = remotePosition.z - localPos.z;
+    const distance = Math.sqrt(dx * dx + dz * dz);
+    const gridDistance = distance / 10; // Convert to grid squares
+
+    // Get audio tracks
+    const audioTracks = stream.getAudioTracks();
+    if (audioTracks.length === 0) return;
+
+    // Find or create audio element for this peer
+    let audio = document.getElementById(`audio-${peerId}`);
+    if (!audio) {
+      audio = document.createElement('audio');
+      audio.id = `audio-${peerId}`;
+      audio.srcObject = new MediaStream(audioTracks);
+      audio.autoplay = true;
+      document.body.appendChild(audio);
+    }
+
+    // Set volume based on proximity (within 2 grid squares = 20 units)
+    const proximityRange = 20;
+    if (distance <= proximityRange) {
+      const volume = 1 - (distance / proximityRange);
+      audio.volume = Math.max(0, Math.min(1, volume));
+      audio.muted = false;
+    } else {
+      audio.muted = true;
     }
   }
 

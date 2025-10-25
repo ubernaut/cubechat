@@ -136,19 +136,27 @@ export class TronScene {
   }
 
   createPlayer(id, color, position) {
-    // Create cube for player (3x bigger)
-    const geometry = new THREE.BoxGeometry(3, 3, 3);
-    const material = new THREE.MeshPhongMaterial({
-      color: color,
-      emissive: color,
-      emissiveIntensity: 0.5,
-      shininess: 100
-    });
-    const cube = new THREE.Mesh(geometry, material);
+    // Create cube for player (6x6x6 - twice as big)
+    const geometry = new THREE.BoxGeometry(6, 6, 6);
+    
+    // Create materials array for each face
+    const materials = [];
+    for (let i = 0; i < 6; i++) {
+      materials.push(new THREE.MeshPhongMaterial({
+        color: color,
+        emissive: color,
+        emissiveIntensity: 0.5,
+        shininess: 100
+      }));
+    }
+    
+    const cube = new THREE.Mesh(geometry, materials);
     cube.position.set(position.x, position.y, position.z);
+    cube.userData.videoTexture = null;
+    cube.userData.videoElement = null;
 
     // Add glow effect (proportionally bigger)
-    const glowGeometry = new THREE.BoxGeometry(3.6, 3.6, 3.6);
+    const glowGeometry = new THREE.BoxGeometry(7.2, 7.2, 7.2);
     const glowMaterial = new THREE.MeshBasicMaterial({
       color: color,
       transparent: true,
@@ -161,6 +169,107 @@ export class TronScene {
     this.players.set(id, cube);
 
     return cube;
+  }
+
+  setPlayerVideoStream(id, stream) {
+    const player = this.players.get(id);
+    if (!player) {
+      console.error('Player not found:', id);
+      return;
+    }
+    if (!stream) {
+      console.error('No stream provided for player:', id);
+      return;
+    }
+
+    console.log('Setting video stream for player', id);
+    console.log('Stream video tracks:', stream.getVideoTracks().length);
+
+    // Store original color
+    if (!player.userData.originalColor) {
+      const firstMaterial = Array.isArray(player.material) ? player.material[0] : player.material;
+      player.userData.originalColor = firstMaterial.color.clone();
+    }
+
+    // Create video element
+    const video = document.createElement('video');
+    video.srcObject = stream;
+    video.autoplay = true;
+    video.playsInline = true; // Important for mobile
+    video.muted = true; // Will control audio separately for proximity
+    
+    // Wait for video metadata to load before applying texture
+    video.onloadedmetadata = () => {
+      console.log('Video metadata loaded for', id, 'Dimensions:', video.videoWidth, 'x', video.videoHeight);
+      
+      // Create video texture
+      const videoTexture = new THREE.VideoTexture(video);
+      videoTexture.minFilter = THREE.LinearFilter;
+      videoTexture.magFilter = THREE.LinearFilter;
+      videoTexture.format = THREE.RGBFormat;
+      
+      // Apply to all faces for testing (will show on all sides)
+      const videoMaterial = new THREE.MeshBasicMaterial({
+        map: videoTexture
+      });
+      
+      // Replace all materials with video material
+      if (Array.isArray(player.material)) {
+        player.material = player.material.map(() => videoMaterial.clone());
+        player.material[4].map = videoTexture; // Front face gets the texture
+      } else {
+        player.material = videoMaterial;
+      }
+      
+      // Store references
+      player.userData.videoTexture = videoTexture;
+      player.userData.videoElement = video;
+      
+      console.log('Applied video texture to player', id);
+    };
+    
+    // Ensure video plays
+    video.play().then(() => {
+      console.log('Video playing for', id);
+    }).catch(err => {
+      console.error('Error playing video for', id, err);
+    });
+  }
+
+  removePlayerVideoStream(id) {
+    const player = this.players.get(id);
+    if (!player) return;
+
+    console.log('Removing video stream from player', id);
+
+    // Stop and clean up video element
+    if (player.userData.videoElement) {
+      player.userData.videoElement.pause();
+      player.userData.videoElement.srcObject = null;
+      player.userData.videoElement = null;
+    }
+
+    // Dispose video texture
+    if (player.userData.videoTexture) {
+      player.userData.videoTexture.dispose();
+      player.userData.videoTexture = null;
+    }
+
+    // Restore original colored materials
+    if (player.userData.originalColor) {
+      const materials = [];
+      for (let i = 0; i < 6; i++) {
+        materials.push(new THREE.MeshPhongMaterial({
+          color: player.userData.originalColor,
+          emissive: player.userData.originalColor,
+          emissiveIntensity: 0.5,
+          shininess: 100
+        }));
+      }
+      player.material = materials;
+    }
+
+    console.log('Restored original materials for player', id);
   }
 
   updatePlayer(id, position, rotation = null) {
@@ -192,12 +301,12 @@ export class TronScene {
   }
 
   updateCamera(rotation = 0) {
-    // Follow local player with rotation
+    // Follow local player with rotation (closer camera)
     if (this.localPlayerId) {
       const localPlayer = this.players.get(this.localPlayerId);
       if (localPlayer) {
-        const distance = 30;
-        const height = 20;
+        const distance = 15; // Closer camera (was 30)
+        const height = 10;   // Lower camera (was 20)
         
         // Calculate camera position based on rotation
         const targetPos = new THREE.Vector3(
