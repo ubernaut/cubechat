@@ -16,10 +16,10 @@ class TronOverworld {
     const app = document.querySelector('#app');
     app.innerHTML = `
       <div id="loading">
-        <h1>Tron Overworld</h1>
+        <h1>Overworld</h1>
         <p>Initializing P2P Network...</p>
         <p style="font-size: 0.9em; color: #00ffff;">Click to start</p>
-        <p style="font-size: 0.8em; color: #00cccc;">WASD: Move | Mouse/Arrows: Look | Movement has momentum</p>
+        <p style="font-size: 0.8em; color: #00cccc; max-width: 90%; margin: 0.5em auto;">WASD: Move | Mouse/Arrows: Look | Movement has momentum</p>
       </div>
       <div id="scene-container"></div>
     `;
@@ -90,8 +90,8 @@ class TronOverworld {
       app.innerHTML = `
         <div id="loading">
           <h1>Error</h1>
-          <p>Failed to initialize P2P network: ${error.message}</p>
-          <p>Please check the console for more details.</p>
+          <p style="max-width: 90%; margin: 0.5em auto;">Failed to initialize P2P network: ${error.message}</p>
+          <p style="max-width: 90%; margin: 0.5em auto;">Please check the console for more details.</p>
         </div>
       `;
     }

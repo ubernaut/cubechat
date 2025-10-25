@@ -51,45 +51,93 @@ export class TronScene {
   }
 
   createGrid() {
-    const gridSize = 200;
-    const gridDivisions = 40;
+    this.gridSize = 1000; // Much larger initial grid
+    this.gridDivisions = 100;
     const gridColor = 0x00ffff; // Cyan for Tron theme
 
     // Create main grid
-    const gridHelper = new THREE.GridHelper(
-      gridSize,
-      gridDivisions,
+    this.gridHelper = new THREE.GridHelper(
+      this.gridSize,
+      this.gridDivisions,
       gridColor,
       gridColor
     );
-    gridHelper.material.opacity = 0.3;
-    gridHelper.material.transparent = true;
-    this.scene.add(gridHelper);
+    this.gridHelper.material.opacity = 0.7;
+    this.gridHelper.material.transparent = true;
+    this.scene.add(this.gridHelper);
 
     // Add glowing effect to grid lines
     const gridMaterial = new THREE.LineBasicMaterial({
       color: gridColor,
-      opacity: 0.5,
+      opacity: 0.8,
       transparent: true
     });
 
     // Create floor plane for better visual effect
-    const floorGeometry = new THREE.PlaneGeometry(gridSize, gridSize);
+    this.floorGeometry = new THREE.PlaneGeometry(this.gridSize, this.gridSize);
     const floorMaterial = new THREE.MeshBasicMaterial({
-      color: 0x001030,
+      color: 0x002050,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.5
+      opacity: 0.7
     });
-    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -0.01;
-    this.scene.add(floor);
+    this.floor = new THREE.Mesh(this.floorGeometry, floorMaterial);
+    this.floor.rotation.x = -Math.PI / 2;
+    this.floor.position.y = -0.01;
+    this.scene.add(this.floor);
+  }
+
+  expandGrid(playerPosition) {
+    // Check if player is getting close to grid edge
+    const distanceFromCenter = Math.sqrt(
+      playerPosition.x * playerPosition.x + 
+      playerPosition.z * playerPosition.z
+    );
+    
+    // Expand if within 30% of edge
+    const expansionThreshold = this.gridSize * 0.35;
+    if (distanceFromCenter > expansionThreshold) {
+      // Remove old grid and floor
+      this.scene.remove(this.gridHelper);
+      this.scene.remove(this.floor);
+      
+      // Increase size
+      this.gridSize += 200;
+      this.gridDivisions = Math.min(this.gridDivisions + 20, 200);
+      
+      const gridColor = 0x00ffff;
+      
+      // Create new larger grid
+      this.gridHelper = new THREE.GridHelper(
+        this.gridSize,
+        this.gridDivisions,
+        gridColor,
+        gridColor
+      );
+      this.gridHelper.material.opacity = 0.7;
+      this.gridHelper.material.transparent = true;
+      this.scene.add(this.gridHelper);
+      
+      // Create new larger floor
+      this.floorGeometry = new THREE.PlaneGeometry(this.gridSize, this.gridSize);
+      const floorMaterial = new THREE.MeshBasicMaterial({
+        color: 0x002050,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.7
+      });
+      this.floor = new THREE.Mesh(this.floorGeometry, floorMaterial);
+      this.floor.rotation.x = -Math.PI / 2;
+      this.floor.position.y = -0.01;
+      this.scene.add(this.floor);
+      
+      console.log('Grid expanded to size:', this.gridSize);
+    }
   }
 
   createPlayer(id, color, position) {
-    // Create cube for player
-    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    // Create cube for player (3x bigger)
+    const geometry = new THREE.BoxGeometry(3, 3, 3);
     const material = new THREE.MeshPhongMaterial({
       color: color,
       emissive: color,
@@ -99,8 +147,8 @@ export class TronScene {
     const cube = new THREE.Mesh(geometry, material);
     cube.position.set(position.x, position.y, position.z);
 
-    // Add glow effect
-    const glowGeometry = new THREE.BoxGeometry(1.2, 1.2, 1.2);
+    // Add glow effect (proportionally bigger)
+    const glowGeometry = new THREE.BoxGeometry(3.6, 3.6, 3.6);
     const glowMaterial = new THREE.MeshBasicMaterial({
       color: color,
       transparent: true,
@@ -166,6 +214,13 @@ export class TronScene {
 
   render(rotation = 0) {
     this.updateCamera(rotation);
+    
+    // Check if grid needs expansion
+    const localPlayerPos = this.getLocalPlayerPosition();
+    if (localPlayerPos) {
+      this.expandGrid(localPlayerPos);
+    }
+    
     this.renderer.render(this.scene, this.camera);
   }
 

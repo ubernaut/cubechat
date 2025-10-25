@@ -25,23 +25,27 @@ body {
   text-align: center;
   z-index: 1000;
   background: rgba(0, 4, 40, 0.9);
-  padding: 2rem 3rem;
+  padding: 1.5rem 2rem;
   border: 2px solid #00ffff;
   border-radius: 10px;
   box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+  max-width: 90%;
+  width: auto;
 }
 
 #loading h1 {
-  font-size: 3rem;
+  font-size: clamp(1.5rem, 8vw, 3rem);
   margin-bottom: 1rem;
   text-shadow: 0 0 10px #00ffff, 0 0 20px #00ffff;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.1em;
+  word-wrap: break-word;
 }
 
 #loading p {
-  font-size: 1.2rem;
-  margin-top: 1rem;
+  font-size: clamp(0.8rem, 3vw, 1.2rem);
+  margin-top: 0.8rem;
   color: #00cccc;
+  word-wrap: break-word;
 }
 
 #scene-container {

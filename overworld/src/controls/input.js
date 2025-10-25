@@ -1,8 +1,8 @@
 export class PlayerController {
   constructor() {
     this.keys = {};
-    this.maxSpeed = 0.2;           // Maximum movement speed
-    this.acceleration = 0.05;      // Acceleration rate
+    this.maxSpeed = 0.6;           // Maximum movement speed (3x faster)
+    this.acceleration = 0.15;      // Acceleration rate (3x faster)
     this.friction = 0.95;          // Friction coefficient (0-1, lower = more friction)
     this.turnSpeed = 0.02;         // Arrow key turn speed
     this.mouseSensitivity = 0.002; // Mouse rotation sensitivity
