@@ -24,6 +24,8 @@ export class P2PNetwork {
     this.peerConnections = new Map();
     this.remoteStreams = new Map();
     this.pendingIceCandidates = new Map(); // Queue ICE candidates until ready
+    this.lastBroadcastState = null; // Track last broadcast state to detect changes
+    this.dataChannels = new Map(); // Store data channels for each peer
   }
 
   async init() {
@@ -166,10 +168,22 @@ export class P2PNetwork {
     const pc = new RTCPeerConnection(config);
     this.peerConnections.set(peerId, pc);
 
-    // Add local tracks
-    this.localStream.getTracks().forEach(track => {
-      pc.addTrack(track, this.localStream);
-    });
+    // Create data channel for position updates
+    const dataChannel = pc.createDataChannel('playerState');
+    this.setupDataChannel(peerId, dataChannel);
+
+    // Add local tracks if available
+    if (this.localStream) {
+      this.localStream.getTracks().forEach(track => {
+        pc.addTrack(track, this.localStream);
+      });
+    }
+
+    // Handle incoming data channels
+    pc.ondatachannel = (event) => {
+      console.log('Received data channel from', peerId);
+      this.setupDataChannel(peerId, event.channel);
+    };
 
     // Handle incoming tracks
     pc.ontrack = (event) => {
@@ -210,8 +224,6 @@ export class P2PNetwork {
   }
 
   async handleOffer(peerId, offer) {
-    if (!this.localStream) return;
-
     // Accept offers (we're the responder)
     if (this.peerConnections.has(peerId)) {
       console.log('Connection already exists for', peerId);
@@ -227,10 +239,18 @@ export class P2PNetwork {
     const pc = new RTCPeerConnection(config);
     this.peerConnections.set(peerId, pc);
 
-    // Add local tracks
-    this.localStream.getTracks().forEach(track => {
-      pc.addTrack(track, this.localStream);
-    });
+    // Handle incoming data channels
+    pc.ondatachannel = (event) => {
+      console.log('Received data channel from', peerId);
+      this.setupDataChannel(peerId, event.channel);
+    };
+
+    // Add local tracks if available
+    if (this.localStream) {
+      this.localStream.getTracks().forEach(track => {
+        pc.addTrack(track, this.localStream);
+      });
+    }
 
     // Handle incoming tracks
     pc.ontrack = (event) => {
@@ -323,12 +343,57 @@ export class P2PNetwork {
     }
   }
 
+  setupDataChannel(peerId, channel) {
+    this.dataChannels.set(peerId, channel);
+
+    channel.onopen = () => {
+      console.log('Data channel opened with', peerId);
+    };
+
+    channel.onclose = () => {
+      console.log('Data channel closed with', peerId);
+      this.dataChannels.delete(peerId);
+    };
+
+    channel.onerror = (error) => {
+      console.error('Data channel error with', peerId, error);
+    };
+
+    channel.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        
+        // Handle player state updates via P2P
+        if (message.type === 'player_state') {
+          this.peers.set(peerId, message.data);
+          
+          // Notify handlers
+          this.messageHandlers.forEach(handler => handler({
+            type: 'player_update',
+            peerId: peerId,
+            data: message.data
+          }));
+        }
+      } catch (error) {
+        console.error('Error parsing data channel message:', error);
+      }
+    };
+  }
+
   closePeerConnection(peerId) {
     const pc = this.peerConnections.get(peerId);
     if (pc) {
       pc.close();
       this.peerConnections.delete(peerId);
     }
+    
+    // Close data channel
+    const channel = this.dataChannels.get(peerId);
+    if (channel) {
+      channel.close();
+      this.dataChannels.delete(peerId);
+    }
+    
     this.remoteStreams.delete(peerId);
     
     // Notify handlers that stream was removed
@@ -411,10 +476,10 @@ export class P2PNetwork {
 
 
   startBroadcasting() {
-    // Broadcast player state via WebSocket
+    // Check for changes and broadcast only when player state changes
     setInterval(() => {
-      this.broadcastPlayerState();
-    }, 100); // 10 times per second
+      this.broadcastPlayerStateIfChanged();
+    }, 100); // Check 10 times per second
     
     // Check proximity and manage connections every second
     setInterval(() => {
@@ -422,14 +487,115 @@ export class P2PNetwork {
     }, 1000);
   }
 
+  // Check if player state has changed significantly
+  hasPlayerStateChanged() {
+    if (!this.lastBroadcastState) return true;
+    
+    const current = this.localPlayer;
+    const last = this.lastBroadcastState;
+    
+    // Define threshold for position changes (small movements don't trigger update)
+    const POSITION_THRESHOLD = 0.01;
+    const ROTATION_THRESHOLD = 0.01;
+    const VELOCITY_THRESHOLD = 0.001;
+    
+    // Check position changes
+    if (Math.abs(current.position.x - last.position.x) > POSITION_THRESHOLD ||
+        Math.abs(current.position.y - last.position.y) > POSITION_THRESHOLD ||
+        Math.abs(current.position.z - last.position.z) > POSITION_THRESHOLD) {
+      return true;
+    }
+    
+    // Check velocity changes
+    if (Math.abs(current.velocity.x - last.velocity.x) > VELOCITY_THRESHOLD ||
+        Math.abs(current.velocity.y - last.velocity.y) > VELOCITY_THRESHOLD ||
+        Math.abs(current.velocity.z - last.velocity.z) > VELOCITY_THRESHOLD) {
+      return true;
+    }
+    
+    // Check rotation changes
+    if (Math.abs(current.rotation - last.rotation) > ROTATION_THRESHOLD) {
+      return true;
+    }
+    
+    return false;
+  }
+
+  broadcastPlayerStateIfChanged() {
+    if (!this.localPlayer) return;
+    
+    // Only broadcast if state has changed
+    if (this.hasPlayerStateChanged()) {
+      const message = {
+        type: 'player_state',
+        data: this.localPlayer
+      };
+      
+      // Send via P2P data channels to connected peers
+      const sentViaPeer = this.sendToAllPeers(message);
+      
+      // Also send via WebSocket for peer discovery and as fallback
+      // This ensures new players can discover us even if no P2P connection yet
+      this.send({
+        type: 'player_state',
+        peerId: this.localPlayer.id,
+        data: this.localPlayer
+      });
+      
+      // Save current state as last broadcast state
+      this.lastBroadcastState = {
+        position: { ...this.localPlayer.position },
+        velocity: { ...this.localPlayer.velocity },
+        rotation: this.localPlayer.rotation
+      };
+    }
+  }
+
+  // Send message to all connected peers via data channels
+  // Returns the number of peers reached
+  sendToAllPeers(message) {
+    const messageStr = JSON.stringify(message);
+    let sentCount = 0;
+    
+    this.dataChannels.forEach((channel, peerId) => {
+      if (channel.readyState === 'open') {
+        try {
+          channel.send(messageStr);
+          sentCount++;
+        } catch (error) {
+          console.error('Error sending to peer', peerId, error);
+        }
+      }
+    });
+    
+    return sentCount;
+  }
+
+  // Keep the old method for manual broadcasting if needed
   broadcastPlayerState() {
     if (!this.localPlayer) return;
 
+    const message = {
+      type: 'player_state',
+      data: this.localPlayer
+    };
+    
+    // Send via P2P data channels to all connected peers
+    this.sendToAllPeers(message);
+    
+    // Also send via WebSocket as fallback
     this.send({
       type: 'player_state',
       peerId: this.localPlayer.id,
       data: this.localPlayer
     });
+    
+    // Update last broadcast state
+    this.lastBroadcastState = {
+      position: { ...this.localPlayer.position },
+      velocity: { ...this.localPlayer.velocity },
+      rotation: this.localPlayer.rotation
+    };
   }
 
   updateLocalPlayer(updates) {
