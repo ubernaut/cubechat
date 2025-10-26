@@ -136,6 +136,12 @@ class TronOverworld {
     } else if (message.type === 'stream_added') {
       // Apply video stream to player cube
       this.scene.setPlayerVideoStream(message.peerId, message.stream);
+      
+      // Initialize audio for this peer
+      const peerData = this.network.getPeers().find(p => p.id === message.peerId);
+      if (peerData) {
+        this.updateProximityAudio(message.peerId, peerData.position);
+      }
     } else if (message.type === 'stream_removed') {
       // Remove video texture from cube (revert to colored cube)
       this.scene.removePlayerVideoStream(message.peerId);
@@ -150,10 +156,16 @@ class TronOverworld {
 
   updateProximityAudio(peerId, remotePosition) {
     const stream = this.network.getRemoteStream(peerId);
-    if (!stream) return;
+    if (!stream) {
+      console.log('No stream found for', peerId);
+      return;
+    }
 
     const localPos = this.scene.getLocalPlayerPosition();
-    if (!localPos) return;
+    if (!localPos) {
+      console.log('No local position');
+      return;
+    }
 
     // Calculate distance between players (grid squares are 10 units)
     const dx = remotePosition.x - localPos.x;
@@ -163,16 +175,25 @@ class TronOverworld {
 
     // Get audio tracks
     const audioTracks = stream.getAudioTracks();
+    console.log('Audio tracks for', peerId, ':', audioTracks.length);
     if (audioTracks.length === 0) return;
 
     // Find or create audio element for this peer
     let audio = document.getElementById(`audio-${peerId}`);
     if (!audio) {
+      console.log('Creating audio element for', peerId);
       audio = document.createElement('audio');
       audio.id = `audio-${peerId}`;
       audio.srcObject = new MediaStream(audioTracks);
       audio.autoplay = true;
       document.body.appendChild(audio);
+      
+      // Explicitly play audio (required by browser autoplay policies)
+      audio.play().then(() => {
+        console.log('Audio playing successfully for', peerId);
+      }).catch(err => {
+        console.warn('Audio autoplay blocked for', peerId, '- user interaction required:', err);
+      });
     }
 
     // Set volume based on proximity (within 2 grid squares = 20 units)
@@ -181,8 +202,10 @@ class TronOverworld {
       const volume = 1 - (distance / proximityRange);
       audio.volume = Math.max(0, Math.min(1, volume));
       audio.muted = false;
+      console.log(`Audio for ${peerId}: distance=${distance.toFixed(1)}, volume=${volume.toFixed(2)}, muted=false`);
     } else {
       audio.muted = true;
+      console.log(`Audio for ${peerId}: distance=${distance.toFixed(1)}, muted=true (too far)`);
     }
   }
 

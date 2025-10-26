@@ -1,14 +1,20 @@
 export class PlayerController {
   constructor() {
     this.keys = {};
-    this.maxSpeed = 1.2;           // Maximum movement speed (6x faster, 2x from before)
-    this.acceleration = 0.3;       // Acceleration rate (6x faster, 2x from before)
-    this.friction = 0.95;          // Friction coefficient (0-1, lower = more friction)
-    this.turnSpeed = 0.02;         // Arrow key turn speed
+    this.maxSpeed = 6;           // Maximum movement speed (6x faster, 2x from before)
+    this.acceleration = .2;       // Acceleration rate (6x faster, 2x from before)
+    this.friction = 0.5;          // Friction coefficient (0-1, lower = more friction)
+    this.turnSpeed = 0.1;         // Arrow key turn speed
     this.mouseSensitivity = 0.002; // Mouse rotation sensitivity
     
     this.velocity = { x: 0, y: 0, z: 0 };
     this.rotation = 0; // Camera rotation around Y axis
+    
+    // Jump properties
+    this.jumpForce = 9;          // Initial jump velocity
+    this.gravity = .8 ;          // Gravity pull per frame
+    this.groundLevel = 3;          // Y position of ground (half of cube height so cube sits on ground)
+    this.isGrounded = true;        // Whether player is on ground
     
     // Mobile controls
     this.isMobile = false;
@@ -214,6 +220,12 @@ export class PlayerController {
     // Keyboard events
     window.addEventListener('keydown', (e) => {
       this.keys[e.key.toLowerCase()] = true;
+      
+      // Jump on spacebar
+      if (e.key === ' ' && this.isGrounded) {
+        this.velocity.y = this.jumpForce;
+        this.isGrounded = false;
+      }
     });
 
     window.addEventListener('keyup', (e) => {
@@ -310,9 +322,23 @@ export class PlayerController {
       this.velocity.z = 0;
     }
     
+    // Apply jump physics
+    if (!this.isGrounded) {
+      // Apply gravity
+      this.velocity.y -= this.gravity;
+    }
+    
     // Apply velocity to position
     newPosition.x += this.velocity.x;
+    newPosition.y += this.velocity.y;
     newPosition.z += this.velocity.z;
+    
+    // Check if player has landed
+    if (newPosition.y <= this.groundLevel) {
+      newPosition.y = this.groundLevel;
+      this.velocity.y = 0;
+      this.isGrounded = true;
+    }
 
     return newPosition;
   }
@@ -320,7 +346,7 @@ export class PlayerController {
   getVelocity() {
     return {
       x: this.velocity.x,
-      y: 0,
+      y: this.velocity.y,
       z: this.velocity.z
     };
   }

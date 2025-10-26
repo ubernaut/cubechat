@@ -51,39 +51,61 @@ export class TronScene {
   }
 
   createGrid() {
-    this.gridSize = 1000; // Much larger initial grid
-    this.gridDivisions = 100;
-    const gridColor = 0x00ffff; // Cyan for Tron theme
+    this.gridSize = 1000;
+    
+    // Create shader-based grid that renders properly from all angles
+    const gridShader = {
+      vertexShader: `
+        varying vec3 worldPosition;
+        void main() {
+          vec4 worldPos = modelMatrix * vec4(position, 1.0);
+          worldPosition = worldPos.xyz;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec3 worldPosition;
+        uniform float gridSize;
+        uniform vec3 gridColor;
+        uniform vec3 backgroundColor;
+        
+        float getGrid(float coord, float gridSize) {
+          float line = abs(fract(coord / gridSize - 0.5) - 0.5) / fwidth(coord / gridSize);
+          return min(line, 1.0);
+        }
+        
+        void main() {
+          float x = getGrid(worldPosition.x, 10.0);
+          float z = getGrid(worldPosition.z, 10.0);
+          float grid = 1.0 - min(x, z);
+          
+          // Fade grid with distance
+          float dist = length(worldPosition.xz);
+          float fade = 1.0 - smoothstep(300.0, 500.0, dist);
+          grid *= fade;
+          
+          vec3 color = mix(backgroundColor, gridColor, grid);
+          gl_FragColor = vec4(color, 1.0);
+        }
+      `,
+      uniforms: {
+        gridSize: { value: 10.0 },
+        gridColor: { value: new THREE.Color(0x00ffff) },
+        backgroundColor: { value: new THREE.Color(0x001040) }
+      }
+    };
 
-    // Create main grid
-    this.gridHelper = new THREE.GridHelper(
-      this.gridSize,
-      this.gridDivisions,
-      gridColor,
-      gridColor
-    );
-    this.gridHelper.material.opacity = 0.7;
-    this.gridHelper.material.transparent = true;
-    this.scene.add(this.gridHelper);
-
-    // Add glowing effect to grid lines
-    const gridMaterial = new THREE.LineBasicMaterial({
-      color: gridColor,
-      opacity: 0.8,
-      transparent: true
+    const gridMaterial = new THREE.ShaderMaterial({
+      vertexShader: gridShader.vertexShader,
+      fragmentShader: gridShader.fragmentShader,
+      uniforms: gridShader.uniforms,
+      side: THREE.DoubleSide
     });
 
-    // Create floor plane for better visual effect
     this.floorGeometry = new THREE.PlaneGeometry(this.gridSize, this.gridSize);
-    const floorMaterial = new THREE.MeshBasicMaterial({
-      color: 0x002050,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.7
-    });
-    this.floor = new THREE.Mesh(this.floorGeometry, floorMaterial);
+    this.floor = new THREE.Mesh(this.floorGeometry, gridMaterial);
     this.floor.rotation.x = -Math.PI / 2;
-    this.floor.position.y = -0.01;
+    this.floor.position.y = 0;
     this.scene.add(this.floor);
   }
 
@@ -97,38 +119,65 @@ export class TronScene {
     // Expand if within 30% of edge
     const expansionThreshold = this.gridSize * 0.35;
     if (distanceFromCenter > expansionThreshold) {
-      // Remove old grid and floor
-      this.scene.remove(this.gridHelper);
+      // Remove old floor
       this.scene.remove(this.floor);
       
       // Increase size
       this.gridSize += 200;
-      this.gridDivisions = Math.min(this.gridDivisions + 20, 200);
       
-      const gridColor = 0x00ffff;
-      
-      // Create new larger grid
-      this.gridHelper = new THREE.GridHelper(
-        this.gridSize,
-        this.gridDivisions,
-        gridColor,
-        gridColor
-      );
-      this.gridHelper.material.opacity = 0.7;
-      this.gridHelper.material.transparent = true;
-      this.scene.add(this.gridHelper);
-      
-      // Create new larger floor
-      this.floorGeometry = new THREE.PlaneGeometry(this.gridSize, this.gridSize);
-      const floorMaterial = new THREE.MeshBasicMaterial({
-        color: 0x002050,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.7
+      // Create shader-based grid
+      const gridShader = {
+        vertexShader: `
+          varying vec3 worldPosition;
+          void main() {
+            vec4 worldPos = modelMatrix * vec4(position, 1.0);
+            worldPosition = worldPos.xyz;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          varying vec3 worldPosition;
+          uniform float gridSize;
+          uniform vec3 gridColor;
+          uniform vec3 backgroundColor;
+          
+          float getGrid(float coord, float gridSize) {
+            float line = abs(fract(coord / gridSize - 0.5) - 0.5) / fwidth(coord / gridSize);
+            return min(line, 1.0);
+          }
+          
+          void main() {
+            float x = getGrid(worldPosition.x, 10.0);
+            float z = getGrid(worldPosition.z, 10.0);
+            float grid = 1.0 - min(x, z);
+            
+            // Fade grid with distance
+            float dist = length(worldPosition.xz);
+            float fade = 1.0 - smoothstep(300.0, 500.0, dist);
+            grid *= fade;
+            
+            vec3 color = mix(backgroundColor, gridColor, grid);
+            gl_FragColor = vec4(color, 1.0);
+          }
+        `,
+        uniforms: {
+          gridSize: { value: 10.0 },
+          gridColor: { value: new THREE.Color(0x00ffff) },
+          backgroundColor: { value: new THREE.Color(0x001040) }
+        }
+      };
+
+      const gridMaterial = new THREE.ShaderMaterial({
+        vertexShader: gridShader.vertexShader,
+        fragmentShader: gridShader.fragmentShader,
+        uniforms: gridShader.uniforms,
+        side: THREE.DoubleSide
       });
-      this.floor = new THREE.Mesh(this.floorGeometry, floorMaterial);
+
+      this.floorGeometry = new THREE.PlaneGeometry(this.gridSize, this.gridSize);
+      this.floor = new THREE.Mesh(this.floorGeometry, gridMaterial);
       this.floor.rotation.x = -Math.PI / 2;
-      this.floor.position.y = -0.01;
+      this.floor.position.y = 0;
       this.scene.add(this.floor);
       
       console.log('Grid expanded to size:', this.gridSize);
@@ -278,11 +327,16 @@ export class TronScene {
   updatePlayer(id, position, rotation = null) {
     const player = this.players.get(id);
     if (player) {
-      // Smooth interpolation
-      player.position.lerp(
-        new THREE.Vector3(position.x, position.y, position.z),
-        0.2
-      );
+      // For local player, use direct position (no lerp) for precise physics
+      // For remote players, use lerp to smooth network jitter
+      if (id === this.localPlayerId) {
+        player.position.set(position.x, position.y, position.z);
+      } else {
+        player.position.lerp(
+          new THREE.Vector3(position.x, position.y, position.z),
+          0.2
+        );
+      }
       
       // Update rotation if provided (for local player)
       if (rotation !== null) {
@@ -318,7 +372,7 @@ export class TronScene {
           localPlayer.position.z + Math.cos(rotation) * distance
         );
         
-        this.camera.position.lerp(targetPos, 0.1);
+        this.camera.position.lerp(targetPos, 0.9);
         this.camera.lookAt(localPlayer.position);
       }
     }
