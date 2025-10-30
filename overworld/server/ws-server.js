@@ -29,27 +29,36 @@ wss.on('connection', (ws) => {
 
   console.log('New client connected');
 
-  ws.on('message', (data) => {
-    try {
-      const message = JSON.parse(data.toString());
+    ws.on('message', (data) => {
+      try {
+        const message = JSON.parse(data.toString());
 
-      // Store client ID on join
-      if (message.type === 'join') {
-        clientId = message.peerId;
-        clients.set(clientId, ws);
-        console.log(`Player joined: ${clientId}`);
-      }
-
-      // Broadcast message to all other clients
-      clients.forEach((client, id) => {
-        if (id !== clientId && client.readyState === 1) { // 1 = OPEN
-          client.send(data.toString());
+        // Store client ID on join
+        if (message.type === 'join') {
+          clientId = message.peerId;
+          clients.set(clientId, ws);
+          console.log(`Player joined: ${clientId}`);
         }
-      });
-    } catch (error) {
-      console.error('Error handling message:', error);
-    }
-  });
+
+        // Handle WebRTC signaling - send to specific peer
+        if (message.targetPeer && (message.type === 'webrtc-offer' || 
+            message.type === 'webrtc-answer' || message.type === 'webrtc-ice')) {
+          const targetClient = clients.get(message.targetPeer);
+          if (targetClient && targetClient.readyState === 1) {
+            targetClient.send(data.toString());
+          }
+        } else {
+          // Broadcast message to all other clients
+          clients.forEach((client, id) => {
+            if (id !== clientId && client.readyState === 1) {
+              client.send(data.toString());
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Error handling message:', error);
+      }
+    });
 
   ws.on('close', () => {
     if (clientId) {
