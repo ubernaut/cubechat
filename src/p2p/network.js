@@ -7,7 +7,7 @@ function getWebSocketServer() {
   }
   
   // Auto-detect: use the same host that served the page
-  const hostname = window.location.hostname;
+  const hostname = "secretworkshop.net"
   return `ws://${hostname}:8080`;
 }
 
