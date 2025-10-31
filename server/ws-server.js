@@ -21,46 +21,40 @@ function getLocalIP() {
   return 'localhost';
 }
 
-// Store all connected clients
+// Store all connected clients with metadata
 const clients = new Map();
+
+// Ping interval to keep connections alive (30 seconds)
+const PING_INTERVAL = 30000;
 
 wss.on('connection', (ws) => {
   let clientId = null;
-
+  let isAlive = true;
+  
   console.log('New client connected');
-
-    ws.on('message', (data) => {
-      try {
-        const message = JSON.parse(data.toString());
-
-        // Store client ID on join
-        if (message.type === 'join') {
-          clientId = message.peerId;
-          clients.set(clientId, ws);
-          console.log(`Player joined: ${clientId}`);
-        }
-
-        // Handle WebRTC signaling - send to specific peer
-        if (message.targetPeer && (message.type === 'webrtc-offer' || 
-            message.type === 'webrtc-answer' || message.type === 'webrtc-ice')) {
-          const targetClient = clients.get(message.targetPeer);
-          if (targetClient && targetClient.readyState === 1) {
-            targetClient.send(data.toString());
-          }
-        } else {
-          // Broadcast message to all other clients
-          clients.forEach((client, id) => {
-            if (id !== clientId && client.readyState === 1) {
-              client.send(data.toString());
-            }
-          });
-        }
-      } catch (error) {
-        console.error('Error handling message:', error);
-      }
-    });
-
+  
+  // Set up ping/pong to keep connection alive
+  ws.on('pong', () => {
+    isAlive = true;
+  });
+  
+  // Send ping every 30 seconds
+  const pingInterval = setInterval(() => {
+    if (isAlive === false) {
+      console.log('Client timeout, terminating connection:', clientId);
+      clearInterval(pingInterval);
+      ws.terminate();
+      return;
+    }
+    
+    isAlive = false;
+    ws.ping();
+  }, PING_INTERVAL);
+  
+  // Clear interval on close
   ws.on('close', () => {
+    clearInterval(pingInterval);
+    
     if (clientId) {
       clients.delete(clientId);
       console.log(`Player left: ${clientId}`);
@@ -79,8 +73,40 @@ wss.on('connection', (ws) => {
     }
   });
 
+  ws.on('message', (data) => {
+    try {
+      const message = JSON.parse(data.toString());
+
+      // Store client ID on join
+      if (message.type === 'join') {
+        clientId = message.peerId;
+        clients.set(clientId, ws);
+        console.log(`Player joined: ${clientId}`);
+      }
+
+      // Handle WebRTC signaling - send to specific peer
+      if (message.targetPeer && (message.type === 'webrtc-offer' || 
+          message.type === 'webrtc-answer' || message.type === 'webrtc-ice')) {
+        const targetClient = clients.get(message.targetPeer);
+        if (targetClient && targetClient.readyState === 1) {
+          targetClient.send(data.toString());
+        }
+      } else {
+        // Broadcast message to all other clients
+        clients.forEach((client, id) => {
+          if (id !== clientId && client.readyState === 1) {
+            client.send(data.toString());
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error handling message:', error);
+    }
+  });
+
   ws.on('error', (error) => {
     console.error('WebSocket error:', error);
+    clearInterval(pingInterval);
   });
 });
 

@@ -8,7 +8,8 @@ function getWebSocketServer() {
   
   // Auto-detect: use the same host that served the page
   const hostname = "secretworkshop.net"
-  return `wss://secretworkshop.net/cubechat/`;
+  return 'ws://localhost:8080';
+  //return `wss://secretworkshop.net/cubechat/`;
 }
 
 const WS_SERVER = getWebSocketServer();
@@ -26,6 +27,11 @@ export class P2PNetwork {
     this.pendingIceCandidates = new Map(); // Queue ICE candidates until ready
     this.lastBroadcastState = null; // Track last broadcast state to detect changes
     this.dataChannels = new Map(); // Store data channels for each peer
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 10;
+    this.reconnectDelay = 1000; // Start with 1 second
+    this.isReconnecting = false;
+    this.shouldReconnect = true;
   }
 
   async init() {
@@ -88,6 +94,11 @@ export class P2PNetwork {
 
         this.ws.onclose = () => {
           console.log('Disconnected from P2P server');
+          
+          // Attempt to reconnect if not intentionally stopped
+          if (this.shouldReconnect && !this.isReconnecting) {
+            this.attemptReconnect();
+          }
         };
 
         // Timeout after 5 seconds
@@ -613,7 +624,89 @@ export class P2PNetwork {
     }));
   }
 
+  async attemptReconnect() {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.error('Max reconnection attempts reached. Please refresh the page.');
+      return;
+    }
+    
+    this.isReconnecting = true;
+    this.reconnectAttempts++;
+    
+    // Exponential backoff: 1s, 2s, 4s, 8s, etc. (max 30s)
+    const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 30000);
+    
+    console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts}) in ${delay}ms...`);
+    
+    setTimeout(async () => {
+      try {
+        await this.reconnect();
+        console.log('Reconnected successfully!');
+        this.reconnectAttempts = 0; // Reset on success
+        this.isReconnecting = false;
+      } catch (error) {
+        console.error('Reconnection failed:', error);
+        this.isReconnecting = false;
+        // Will trigger another attempt via onclose handler
+      }
+    }, delay);
+  }
+
+  async reconnect() {
+    return new Promise((resolve, reject) => {
+      try {
+        this.ws = new WebSocket(WS_SERVER);
+
+        this.ws.onopen = () => {
+          console.log('Reconnected to P2P relay server');
+          
+          // Re-announce presence with current state
+          this.send({
+            type: 'join',
+            peerId: this.localPlayer.id,
+            data: this.localPlayer
+          });
+
+          // Broadcast current state immediately
+          this.broadcastPlayerState();
+
+          resolve();
+        };
+
+        this.ws.onmessage = (event) => {
+          this.handleMessage(JSON.parse(event.data));
+        };
+
+        this.ws.onerror = (error) => {
+          console.error('WebSocket reconnection error:', error);
+          reject(error);
+        };
+
+        this.ws.onclose = () => {
+          console.log('Disconnected from P2P server');
+          
+          // Attempt to reconnect if not intentionally stopped
+          if (this.shouldReconnect && !this.isReconnecting) {
+            this.attemptReconnect();
+          }
+        };
+
+        // Timeout after 5 seconds
+        setTimeout(() => {
+          if (this.ws.readyState !== WebSocket.OPEN) {
+            reject(new Error('Reconnection timeout'));
+          }
+        }, 5000);
+      } catch (error) {
+        console.error('Failed to reconnect:', error);
+        reject(error);
+      }
+    });
+  }
+
   async stop() {
+    this.shouldReconnect = false; // Prevent reconnection attempts
+    
     if (this.ws) {
       this.send({
         type: 'leave',
@@ -621,6 +714,17 @@ export class P2PNetwork {
       });
       this.ws.close();
     }
+    
+    // Close all peer connections
+    this.peerConnections.forEach((pc, peerId) => {
+      this.closePeerConnection(peerId);
+    });
+    
+    // Stop local media stream
+    if (this.localStream) {
+      this.localStream.getTracks().forEach(track => track.stop());
+    }
+    
     console.log('P2P Network stopped');
   }
 }
