@@ -8,8 +8,8 @@ function getWebSocketServer() {
   
   // Auto-detect: use the same host that served the page
   const hostname = "secretworkshop.net"
-  return 'ws://localhost:8080';
-  //return `wss://secretworkshop.net/cubechat/`;
+  //return 'ws://localhost:8080';
+  return `wss://secretworkshop.net/cubechat/`;
 }
 
 const WS_SERVER = getWebSocketServer();
