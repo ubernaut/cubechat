@@ -1,10 +1,10 @@
 export class PlayerController {
   constructor() {
     this.keys = {};
-    this.maxSpeed = 6;           // Maximum movement speed (6x faster, 2x from before)
+    this.maxSpeed = 12;           // Maximum movement speed (6x faster, 2x from before)
     this.acceleration = .2;       // Acceleration rate (6x faster, 2x from before)
-    this.friction = 0.5;          // Friction coefficient (0-1, lower = more friction)
-    this.turnSpeed = 0.1;         // Arrow key turn speed
+    this.friction = 0.8;          // Friction coefficient (0-1, lower = more friction)
+    this.turnSpeed = 0.05;         // Arrow key turn speed
     this.mouseSensitivity = 0.002; // Mouse rotation sensitivity
     
     this.velocity = { x: 0, y: 0, z: 0 };
@@ -54,13 +54,108 @@ export class PlayerController {
     const rightJoy = this.createJoystick('right', 'Look');
     rightJoy.style.cssText += 'right: 50px; bottom: 50px;';
 
+    // Jump button (center)
+    const jumpButton = this.createJumpButton();
+    
     controlsDiv.appendChild(leftJoy);
+    controlsDiv.appendChild(jumpButton);
     controlsDiv.appendChild(rightJoy);
     document.body.appendChild(controlsDiv);
 
-    this.joystickElements = { left: leftJoy, right: rightJoy };
+    this.joystickElements = { left: leftJoy, right: rightJoy, jump: jumpButton };
     this.setupJoystickListeners(leftJoy, 'move');
     this.setupJoystickListeners(rightJoy, 'look');
+    this.setupJumpButtonListener(jumpButton);
+  }
+
+  createJumpButton() {
+    const button = document.createElement('div');
+    button.className = 'jump-button';
+    button.style.cssText = `
+      position: absolute;
+      width: 80px;
+      height: 80px;
+      left: 50%;
+      bottom: 60px;
+      transform: translateX(-50%);
+      pointer-events: auto;
+      border-radius: 50%;
+      background: rgba(0, 255, 255, 0.3);
+      border: 3px solid rgba(0, 255, 255, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 40px;
+      color: #00ffff;
+      font-weight: bold;
+      user-select: none;
+      transition: all 0.1s;
+      cursor: pointer;
+    `;
+
+    // Up arrow character
+    button.textContent = '↑';
+
+    // Add label
+    const labelDiv = document.createElement('div');
+    labelDiv.textContent = 'Jump';
+    labelDiv.style.cssText = `
+      position: absolute;
+      top: -25px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #00ffff;
+      font-size: 12px;
+      font-family: monospace;
+      white-space: nowrap;
+    `;
+    button.appendChild(labelDiv);
+
+    return button;
+  }
+
+  setupJumpButtonListener(button) {
+    let touchId = null;
+
+    button.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      if (touchId === null && this.isGrounded) {
+        const touch = e.touches[0];
+        touchId = touch.identifier;
+        
+        // Trigger jump
+        this.velocity.y = this.jumpForce;
+        this.isGrounded = false;
+        
+        // Visual feedback
+        button.style.background = 'rgba(0, 255, 255, 0.6)';
+        button.style.transform = 'translateX(-50%) scale(0.9)';
+      }
+    });
+
+    document.addEventListener('touchend', (e) => {
+      for (let touch of e.changedTouches) {
+        if (touch.identifier === touchId) {
+          touchId = null;
+          button.style.background = 'rgba(0, 255, 255, 0.3)';
+          button.style.transform = 'translateX(-50%) scale(1)';
+          break;
+        }
+      }
+    });
+
+    document.addEventListener('touchcancel', (e) => {
+      for (let touch of e.changedTouches) {
+        if (touch.identifier === touchId) {
+          touchId = null;
+          button.style.background = 'rgba(0, 255, 255, 0.3)';
+          button.style.transform = 'translateX(-50%) scale(1)';
+          break;
+        }
+      }
+    });
   }
 
   createJoystick(side, label) {
