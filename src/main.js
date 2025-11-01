@@ -49,6 +49,11 @@ class CubeChat {
       // Initialize player controller
       this.controller = new PlayerController();
 
+      // Trigger an initial jump so other players can see this player join
+      setTimeout(() => {
+        this.controller.triggerJump();
+      }, 500); // Small delay to ensure everything is initialized
+
       // Set up network message handler
       this.network.onMessage((message) => {
         this.handleNetworkMessage(message);
@@ -201,6 +206,8 @@ class CubeChat {
       // Update local player position based on input
       const currentPos = this.scene.getLocalPlayerPosition();
       const rotation = this.controller.getRotation();
+      const pitch = this.controller.getPitch();
+      const zoom = this.controller.getZoom();
       
       if (currentPos) {
         const newPos = this.controller.update(currentPos);
@@ -221,8 +228,8 @@ class CubeChat {
         }
       }
 
-      // Render scene with current rotation
-      this.scene.render(rotation);
+      // Render scene with current rotation, pitch, and zoom
+      this.scene.render(rotation, pitch, zoom);
 
       // Continue loop
       requestAnimationFrame(gameLoop);

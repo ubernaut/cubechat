@@ -5,10 +5,17 @@ export class PlayerController {
     this.acceleration = .2;       // Acceleration rate (6x faster, 2x from before)
     this.friction = 0.8;          // Friction coefficient (0-1, lower = more friction)
     this.turnSpeed = 0.05;         // Arrow key turn speed
-    this.mouseSensitivity = 0.002; // Mouse rotation sensitivity
+    this.mouseSensitivity = 0.002; // Mouse horizontal rotation sensitivity
+    this.mouseSensitivityVertical = 0.0002; // Mouse vertical look sensitivity
     
     this.velocity = { x: 0, y: 0, z: 0 };
-    this.rotation = 0; // Camera rotation around Y axis
+    this.rotation = 0; // Camera rotation around Y axis (yaw)
+    this.pitch = 0;    // Camera vertical rotation (pitch)
+    this.maxPitch = Math.PI / 2 - 0.1; // Limit to prevent flipping (slightly less than 90 degrees)
+    this.zoom = 1.0;   // Zoom level (0.5 = zoomed in, 2.0 = zoomed out)
+    this.minZoom = 0.3; // Minimum zoom (closest)
+    this.maxZoom = 3.0; // Maximum zoom (farthest)
+    this.zoomSpeed = 0.1; // Zoom speed for mousewheel
     
     // Jump properties
     this.jumpForce = 9;          // Initial jump velocity
@@ -330,8 +337,68 @@ export class PlayerController {
     // Mouse movement for rotation (when pointer is locked)
     document.addEventListener('mousemove', (event) => {
       if (document.pointerLockElement) {
+        // Horizontal rotation (yaw)
         this.rotation -= event.movementX * this.mouseSensitivity;
+        
+        // Vertical rotation (pitch) with separate sensitivity
+        this.pitch -= event.movementY * this.mouseSensitivityVertical;
+        
+        // Clamp pitch to prevent flipping over
+        this.pitch = Math.max(-this.maxPitch, Math.min(this.maxPitch, this.pitch));
       }
+    });
+
+    // Mousewheel for zoom
+    window.addEventListener('wheel', (event) => {
+      event.preventDefault();
+      
+      // Zoom in/out with mousewheel
+      const delta = event.deltaY > 0 ? this.zoomSpeed : -this.zoomSpeed;
+      this.zoom += delta;
+      
+      // Clamp zoom level
+      this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoom));
+    }, { passive: false });
+
+    // Touch events for pinch-to-zoom
+    let touchDistance = 0;
+    
+    document.addEventListener('touchstart', (event) => {
+      if (event.touches.length === 2) {
+        const touch1 = event.touches[0];
+        const touch2 = event.touches[1];
+        touchDistance = Math.hypot(
+          touch2.clientX - touch1.clientX,
+          touch2.clientY - touch1.clientY
+        );
+      }
+    });
+
+    document.addEventListener('touchmove', (event) => {
+      if (event.touches.length === 2) {
+        event.preventDefault();
+        
+        const touch1 = event.touches[0];
+        const touch2 = event.touches[1];
+        const newDistance = Math.hypot(
+          touch2.clientX - touch1.clientX,
+          touch2.clientY - touch1.clientY
+        );
+        
+        if (touchDistance > 0) {
+          const delta = (newDistance - touchDistance) * 0.01;
+          this.zoom -= delta; // Inverted: pinch in = zoom out, pinch out = zoom in
+          
+          // Clamp zoom level
+          this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoom));
+        }
+        
+        touchDistance = newDistance;
+      }
+    }, { passive: false });
+
+    document.addEventListener('touchend', () => {
+      touchDistance = 0;
     });
   }
 
@@ -348,9 +415,15 @@ export class PlayerController {
       forwardBack = -this.moveJoystick.y;  // Inverted because joystick up is negative
       leftRight = this.moveJoystick.x;
       
-      // Look joystick: x-axis rotates view
+      // Look joystick: x-axis rotates view horizontally, y-axis rotates vertically
       if (Math.abs(this.lookJoystick.x) > 0.1) {
         this.rotation -= this.lookJoystick.x * this.turnSpeed * 2; // Faster rotation on mobile
+      }
+      if (Math.abs(this.lookJoystick.y) > 0.1) {
+        this.pitch -= this.lookJoystick.y * this.turnSpeed * 2; // Vertical look on mobile
+        
+        // Clamp pitch to prevent flipping over
+        this.pitch = Math.max(-this.maxPitch, Math.min(this.maxPitch, this.pitch));
       }
     } else {
       // Use keyboard for desktop
@@ -450,6 +523,14 @@ export class PlayerController {
     return this.rotation;
   }
 
+  getPitch() {
+    return this.pitch;
+  }
+
+  getZoom() {
+    return this.zoom;
+  }
+
   getSpeed() {
     return Math.sqrt(this.velocity.x * this.velocity.x + this.velocity.z * this.velocity.z);
   }
@@ -458,5 +539,13 @@ export class PlayerController {
   bounce() {
     this.velocity.x *= -0.5;
     this.velocity.z *= -0.5;
+  }
+
+  // Trigger a jump programmatically (e.g., when player joins)
+  triggerJump() {
+    if (this.isGrounded) {
+      this.velocity.y = this.jumpForce;
+      this.isGrounded = false;
+    }
   }
 }
