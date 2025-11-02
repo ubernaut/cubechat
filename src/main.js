@@ -176,14 +176,9 @@ class CubeChat {
 
   handleNetworkMessage(message) {
     if (message.type === 'screen_stream_added') {
-      // Screen share stream received - store it for billboard use
+      // Screen share stream received - it will be picked up by proximity check
       console.log('Screen share stream received from', message.peerId);
-      
-      // If billboard already exists, update it with the screen stream
-      const billboard = this.remoteBillboards.get(message.peerId);
-      if (billboard) {
-        this.updateBillboardWithScreenStream(message.peerId, message.stream);
-      }
+      // The updateRemoteBillboardProximity() method will automatically apply it when in range
     } else if (message.type === 'player_update') {
       const { peerId, data } = message;
 
@@ -227,10 +222,10 @@ class CubeChat {
         // Peer stopped screen sharing - remove billboard
         this.removeRemoteBillboard(peerId);
       } else if (data.screenSharing && this.remoteBillboards.has(peerId)) {
-        // Update billboard position if it exists
+        // Update billboard position from network data (no physics, direct positioning)
         const billboard = this.remoteBillboards.get(peerId);
-        if (billboard && data.billboardData) {
-          billboard.body.position.set(
+        if (billboard && billboard.mesh && data.billboardData) {
+          billboard.mesh.position.set(
             data.billboardData.position.x,
             data.billboardData.position.y,
             data.billboardData.position.z
@@ -278,6 +273,24 @@ class CubeChat {
       const audio = document.getElementById(`audio-${message.peerId}`);
       if (audio) {
         audio.remove();
+      }
+      
+      // Clear billboard video if it exists
+      const billboard = this.remoteBillboards.get(message.peerId);
+      if (billboard && billboard.video) {
+        console.log('Clearing billboard video due to disconnect:', message.peerId);
+        billboard.video.pause();
+        billboard.video.srcObject = null;
+        billboard.video = null;
+        
+        // Revert billboard to color
+        const colorObj = new THREE.Color(billboard.ownerColor);
+        billboard.mesh.material[4].map = null;
+        billboard.mesh.material[4].color = colorObj;
+        billboard.mesh.material[4].needsUpdate = true;
+        billboard.mesh.material[5].map = null;
+        billboard.mesh.material[5].color = colorObj;
+        billboard.mesh.material[5].needsUpdate = true;
       }
       
       this.logEvent(`Video disconnected: ${message.peerId.substring(0, 8)}...`, 'video-fail');
@@ -368,11 +381,27 @@ class CubeChat {
       const physicsVel = this.physics.getVelocity(this.network.localPlayer.id);
       
       if (physicsPos) {
-        this.network.updateLocalPlayer({
+        const updateData = {
           position: physicsPos,
           velocity: physicsVel,
           rotation: rotation
-        });
+        };
+        
+        // Include billboard position if screen sharing
+        if (this.screenBillboardBody) {
+          updateData.billboardData = {
+            position: {
+              x: this.screenBillboardBody.position.x,
+              y: this.screenBillboardBody.position.y,
+              z: this.screenBillboardBody.position.z
+            },
+            height: parseFloat(localStorage.getItem('screenHeight')) || 100,
+            width: this.screenBillboard.geometry.parameters.width,
+            aspectRatio: this.screenBillboard.geometry.parameters.width / this.screenBillboard.geometry.parameters.height
+          };
+        }
+        
+        this.network.updateLocalPlayer(updateData);
       }
 
       // Update remote billboard proximity (for video streaming)
@@ -518,21 +547,16 @@ class CubeChat {
       this.screenBillboard.quaternion.copy(this.screenBillboardBody.quaternion);
     }
 
-    // Update remote billboards
+    // Update remote billboards (no physics, they follow network position)
     this.remoteBillboards.forEach((billboard, peerId) => {
-      if (billboard.mesh && billboard.body) {
-        billboard.mesh.position.copy(billboard.body.position);
-        billboard.mesh.quaternion.copy(billboard.body.quaternion);
-        
-        // Update name label position
-        if (billboard.nameLabel) {
-          const labelHeight = billboard.height / 2 + 20;
-          billboard.nameLabel.position.set(
-            billboard.body.position.x,
-            billboard.body.position.y + labelHeight,
-            billboard.body.position.z
-          );
-        }
+      if (billboard.mesh && billboard.nameLabel) {
+        // Update name label to follow mesh
+        const labelHeight = billboard.height / 2 + 20;
+        billboard.nameLabel.position.set(
+          billboard.mesh.position.x,
+          billboard.mesh.position.y + labelHeight,
+          billboard.mesh.position.z
+        );
       }
     });
   }
@@ -755,10 +779,11 @@ class CubeChat {
 
   async startScreenShare() {
     try {
-      // Capture screen
+      // Capture screen at 1fps for bandwidth efficiency
       this.screenStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
-          cursor: 'always'
+          cursor: 'always',
+          frameRate: { ideal: 1, max: 1 }
         },
         audio: false
       });
@@ -899,12 +924,9 @@ class CubeChat {
     mesh.position.set(position.x, position.y, position.z);
     this.scene.scene.add(mesh);
 
-    // Create physics body for billboard
-    const body = this.physics.createBox(
-      { x: position.x, y: position.y, z: position.z },
-      { x: width, y: height, z: depth },
-      50 // mass
-    );
+    // Remote billboards don't have physics - they follow network position
+    // Only the owner simulates physics
+    const body = null;
 
     // Create name label above billboard
     const labelHeight = height / 2 + 20; // 20 units above top
@@ -915,11 +937,13 @@ class CubeChat {
     // Store billboard data
     this.remoteBillboards.set(peerId, {
       mesh,
-      body,
+      body: null, // No physics body for remote billboards
       video: null,
       nameLabel,
       ownerColor,
       height,
+      width,
+      depth,
       proximityRange: height * 5 // Video visible within 5x billboard height
     });
 
@@ -945,10 +969,7 @@ class CubeChat {
       this.scene.scene.remove(billboard.mesh);
     }
 
-    // Clean up physics
-    if (billboard.body) {
-      this.physics.world.removeBody(billboard.body);
-    }
+    // No physics body to clean up for remote billboards
 
     // Clean up name label
     if (billboard.nameLabel) {
@@ -999,20 +1020,22 @@ class CubeChat {
 
     this.remoteBillboards.forEach((billboard, peerId) => {
       // Calculate distance to billboard
-      const billboardPos = billboard.body.position;
+      const billboardPos = billboard.mesh.position;
       const dx = billboardPos.x - localPos.x;
       const dy = billboardPos.y - localPos.y;
       const dz = billboardPos.z - localPos.z;
       const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
       const inRange = distance <= billboard.proximityRange;
-      const stream = this.network.getRemoteScreenStream(peerId); // Use screen stream for billboards
-
+      
+      // Get screen stream specifically (NOT camera stream)
+      const screenStream = this.network.getRemoteScreenStream(peerId);
+      
       // Update video texture based on proximity
-      if (inRange && stream && !billboard.video) {
+      if (inRange && screenStream && !billboard.video) {
         // Create video element and apply to billboard
         const video = document.createElement('video');
-        video.srcObject = stream;
+        video.srcObject = screenStream;
         video.play().catch(err => console.warn('Video autoplay blocked:', err));
         billboard.video = video;
 
@@ -1030,7 +1053,7 @@ class CubeChat {
         billboard.mesh.material[5].color.setHex(0xffffff);
         billboard.mesh.material[5].needsUpdate = true;
 
-        console.log(`Applied video texture to billboard ${peerId} (distance: ${distance.toFixed(1)})`);
+        console.log(`Applied screen stream to billboard ${peerId} (distance: ${distance.toFixed(1)})`);
       } else if (!inRange && billboard.video) {
         // Remove video texture, revert to color
         billboard.video.pause();
