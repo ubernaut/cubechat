@@ -10,13 +10,13 @@ export class PhysicsWorld {
   init() {
     // Create physics world
     this.world = new CANNON.World({
-      gravity: new CANNON.Vec3(0, -40, 0) // Stronger gravity for better feel
+      gravity: new CANNON.Vec3(0, -70, 0) // Stronger gravity for better feel
     });
 
     // Configure world properties for smooth, responsive physics
     this.world.broadphase = new CANNON.NaiveBroadphase();
     this.world.solver.iterations = 20; // More iterations for stability
-    this.world.defaultContactMaterial.friction = 0.01; // Very low friction for smooth movement
+    this.world.defaultContactMaterial.friction = 0.0001; // Very low friction for smooth movement
     this.world.defaultContactMaterial.restitution = 0.1; // Minimal bounciness
 
     // Create ground plane
@@ -48,7 +48,7 @@ export class PhysicsWorld {
     this.bodies.set(id, body);
     
     return body;
-  }
+  } 
 
   removePlayerBody(id) {
     const body = this.bodies.get(id);
@@ -65,9 +65,9 @@ export class PhysicsWorld {
   applyForce(id, force) {
     const body = this.bodies.get(id);
     if (body) {
+      // Apply force at center of mass
       body.applyForce(
-        new CANNON.Vec3(force.x, force.y, force.z),
-        body.position
+        new CANNON.Vec3(force.x, force.y, force.z)
       );
     }
   }
@@ -75,9 +75,9 @@ export class PhysicsWorld {
   applyImpulse(id, impulse) {
     const body = this.bodies.get(id);
     if (body) {
+      // Apply impulse at center of mass
       body.applyImpulse(
-        new CANNON.Vec3(impulse.x, impulse.y, impulse.z),
-        body.position
+        new CANNON.Vec3(impulse.x, impulse.y, impulse.z)
       );
     }
   }
@@ -166,14 +166,14 @@ export class PhysicsWorld {
     const body = this.bodies.get(id);
     if (!body) return;
 
-    // Only apply horizontal forces
+    // Only apply horizontal forces at center of mass
     const force = new CANNON.Vec3(
       direction.x * magnitude,
       0,
       direction.z * magnitude
     );
 
-    body.applyForce(force, body.position);
+    body.applyForce(force);
   }
 
   // Apply movement impulse (frame-rate independent)
@@ -181,10 +181,9 @@ export class PhysicsWorld {
     const body = this.bodies.get(id);
     if (!body) return;
 
-    // Apply impulse for immediate velocity change
+    // Apply impulse for immediate velocity change at center of mass
     body.applyImpulse(
-      new CANNON.Vec3(impulse.x, 0, impulse.z),
-      body.position
+      new CANNON.Vec3(impulse.x, 0, impulse.z)
     );
   }
 
@@ -197,9 +196,9 @@ export class PhysicsWorld {
     
     // Only jump if grounded
     if (grounded) {
+      // Apply impulse at center of mass (no second parameter needed)
       body.applyImpulse(
-        new CANNON.Vec3(0, force, 0),
-        body.position
+        new CANNON.Vec3(0, force, 0)
       );
       return true;
     }

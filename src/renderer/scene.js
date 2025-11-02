@@ -16,14 +16,13 @@ export class TronScene {
     // Create scene
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x000428); // Dark blue background
-    this.scene.fog = new THREE.Fog(0x000428, 50, 200);
 
     // Create camera
     this.camera = new THREE.PerspectiveCamera(
       75,
       window.innerWidth / window.innerHeight,
       0.1,
-      1000
+      10000
     );
     this.camera.position.set(0, 20, 30);
     this.camera.lookAt(0, 0, 0);
@@ -38,13 +37,8 @@ export class TronScene {
     this.createGrid();
 
     // Add ambient light
-    const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
     this.scene.add(ambientLight);
-
-    // Add directional light
-    const directionalLight = new THREE.DirectionalLight(0x00ffff, 1);
-    directionalLight.position.set(10, 20, 10);
-    this.scene.add(directionalLight);
 
     // Handle window resize
     window.addEventListener('resize', () => this.onWindowResize());
@@ -78,11 +72,6 @@ export class TronScene {
           float x = getGrid(worldPosition.x, 10.0);
           float z = getGrid(worldPosition.z, 10.0);
           float grid = 1.0 - min(x, z);
-          
-          // Fade grid with distance
-          float dist = length(worldPosition.xz);
-          float fade = 1.0 - smoothstep(300.0, 500.0, dist);
-          grid *= fade;
           
           vec3 color = mix(backgroundColor, gridColor, grid);
           gl_FragColor = vec4(color, 1.0);
@@ -150,11 +139,6 @@ export class TronScene {
             float x = getGrid(worldPosition.x, 10.0);
             float z = getGrid(worldPosition.z, 10.0);
             float grid = 1.0 - min(x, z);
-            
-            // Fade grid with distance
-            float dist = length(worldPosition.xz);
-            float fade = 1.0 - smoothstep(300.0, 500.0, dist);
-            grid *= fade;
             
             vec3 color = mix(backgroundColor, gridColor, grid);
             gl_FragColor = vec4(color, 1.0);
@@ -226,6 +210,21 @@ export class TronScene {
     arrow.visible = true; // Always visible to show orientation
     cube.add(arrow);
     cube.userData.directionArrow = arrow;
+
+    // Add vertical light beam starting 500 units above the cube
+    const beamHeight = 1000; // Very tall beam
+    const beamStartOffset = 500; // Start 500 units above cube
+    const beamGeometry = new THREE.CylinderGeometry(0.5, 0.5, beamHeight, 8);
+    const beamMaterial = new THREE.MeshBasicMaterial({
+      color: color,
+      transparent: true,
+      opacity: 0.4,
+      side: THREE.DoubleSide
+    });
+    const beam = new THREE.Mesh(beamGeometry, beamMaterial);
+    beam.position.y = beamStartOffset + (beamHeight / 2); // Start 500 units above, then center the beam
+    cube.add(beam);
+    cube.userData.lightBeam = beam;
 
     this.scene.add(cube);
     this.players.set(id, cube);

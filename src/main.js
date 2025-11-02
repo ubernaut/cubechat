@@ -334,7 +334,7 @@ class CubeChat {
     const shouldMobileJump = this.shouldMobileJump();
     
     if (shouldJump || shouldMobileJump) {
-      this.physics.jump(this.network.localPlayer.id, 15);
+      this.physics.jump(this.network.localPlayer.id, 300);
     }
   }
 
