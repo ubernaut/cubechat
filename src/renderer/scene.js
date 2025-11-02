@@ -357,29 +357,40 @@ export class TronScene {
     this.localPlayerId = id;
   }
 
-  updateCamera(rotation = 0) {
-    // Follow local player with rotation (closer camera)
+  updateCamera(rotation = 0, pitch = 0, zoom = 1.0) {
+    // Follow local player with rotation, pitch, and zoom
     if (this.localPlayerId) {
       const localPlayer = this.players.get(this.localPlayerId);
       if (localPlayer) {
-        const distance = 15; // Closer camera (was 30)
-        const height = 10;   // Lower camera (was 20)
+        const baseDistance = 15; // Base camera distance
+        const distance = baseDistance * zoom; // Apply zoom to distance
+        const baseHeight = 10;   // Base camera height
         
-        // Calculate camera position based on rotation
-        const targetPos = new THREE.Vector3(
-          localPlayer.position.x + Math.sin(rotation) * distance,
-          localPlayer.position.y + height,
-          localPlayer.position.z + Math.cos(rotation) * distance
+        // Calculate camera position based on rotation and pitch
+        // Pitch affects the vertical position and distance
+        const horizontalDistance = distance * Math.cos(pitch);
+        const verticalOffset = distance * Math.sin(pitch);
+        
+        // Use direct positioning for immediate, smooth response
+        this.camera.position.set(
+          localPlayer.position.x + Math.sin(rotation) * horizontalDistance,
+          localPlayer.position.y + baseHeight + verticalOffset,
+          localPlayer.position.z + Math.cos(rotation) * horizontalDistance
         );
         
-        this.camera.position.lerp(targetPos, 0.9);
-        this.camera.lookAt(localPlayer.position);
+        // Look at a point offset from the player based on pitch
+        const lookAtTarget = new THREE.Vector3(
+          localPlayer.position.x,
+          localPlayer.position.y - Math.tan(pitch) * 5,
+          localPlayer.position.z
+        );
+        this.camera.lookAt(lookAtTarget);
       }
     }
   }
 
-  render(rotation = 0) {
-    this.updateCamera(rotation);
+  render(rotation = 0, pitch = 0, zoom = 1.0) {
+    this.updateCamera(rotation, pitch, zoom);
     
     // Check if grid needs expansion
     const localPlayerPos = this.getLocalPlayerPosition();

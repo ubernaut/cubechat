@@ -22,7 +22,11 @@ class CubeChat {
         <p style="font-size: 0.8em; color: #00cccc; max-width: 90%; margin: 0.5em auto;">WASD: Move | Mouse/Arrows: Look | Movement has momentum</p>
       </div>
       <div id="scene-container"></div>
+      <div id="event-log"></div>
     `;
+
+    // Initialize event log system
+    this.initEventLog();
 
     try {
       // Initialize P2P network
@@ -48,6 +52,11 @@ class CubeChat {
 
       // Initialize player controller
       this.controller = new PlayerController();
+
+      // Trigger an initial jump so other players can see this player join
+      setTimeout(() => {
+        this.controller.triggerJump();
+      }, 500); // Small delay to ensure everything is initialized
 
       // Set up network message handler
       this.network.onMessage((message) => {
@@ -111,6 +120,7 @@ class CubeChat {
         this.scene.createPlayer(peerId, data.color, data.position);
         this.remotePlayers.add(peerId);
         console.log('New player joined:', peerId);
+        this.logEvent(`Player joined: ${peerId.substring(0, 8)}...`, 'join');
       }
 
       // Update remote player position and rotation
@@ -142,6 +152,8 @@ class CubeChat {
       if (peerData) {
         this.updateProximityAudio(message.peerId, peerData.position);
       }
+      
+      this.logEvent(`Video connected: ${message.peerId.substring(0, 8)}...`, 'video-success');
     } else if (message.type === 'stream_removed') {
       // Remove video texture from cube (revert to colored cube)
       this.scene.removePlayerVideoStream(message.peerId);
@@ -151,6 +163,8 @@ class CubeChat {
       if (audio) {
         audio.remove();
       }
+      
+      this.logEvent(`Video disconnected: ${message.peerId.substring(0, 8)}...`, 'video-fail');
     }
   }
 
@@ -201,6 +215,8 @@ class CubeChat {
       // Update local player position based on input
       const currentPos = this.scene.getLocalPlayerPosition();
       const rotation = this.controller.getRotation();
+      const pitch = this.controller.getPitch();
+      const zoom = this.controller.getZoom();
       
       if (currentPos) {
         const newPos = this.controller.update(currentPos);
@@ -221,14 +237,98 @@ class CubeChat {
         }
       }
 
-      // Render scene with current rotation
-      this.scene.render(rotation);
+      // Render scene with current rotation, pitch, and zoom
+      this.scene.render(rotation, pitch, zoom);
 
       // Continue loop
       requestAnimationFrame(gameLoop);
     };
 
     gameLoop();
+  }
+
+  initEventLog() {
+    const logContainer = document.getElementById('event-log');
+    logContainer.style.cssText = `
+      position: fixed;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 90%;
+      max-width: 600px;
+      z-index: 2000;
+      pointer-events: none;
+      font-family: monospace;
+      font-size: 14px;
+    `;
+  }
+
+  logEvent(message, type = 'info') {
+    const logContainer = document.getElementById('event-log');
+    if (!logContainer) return;
+
+    // Detect if mobile
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    const maxMessages = isMobile ? 1 : 5;
+
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    
+    // Set color based on type
+    let color = '#00ffff'; // default cyan
+    let bgColor = 'rgba(0, 20, 40, 0.9)';
+    
+    if (type === 'join') {
+      color = '#00ff00'; // green
+    } else if (type === 'video-success') {
+      color = '#00ffff'; // cyan
+    } else if (type === 'video-fail') {
+      color = '#ff6600'; // orange
+    } else if (type === 'error') {
+      color = '#ff0000'; // red
+    }
+    
+    entry.style.cssText = `
+      background: ${bgColor};
+      color: ${color};
+      padding: 8px 12px;
+      margin-bottom: 5px;
+      border-radius: 4px;
+      border: 1px solid ${color};
+      opacity: 0;
+      transition: opacity 0.3s ease-in-out;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    `;
+    
+    entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+    logContainer.appendChild(entry);
+    
+    // Fade in
+    setTimeout(() => {
+      entry.style.opacity = '1';
+    }, 10);
+    
+    // Fade out and remove after 5 seconds
+    setTimeout(() => {
+      entry.style.opacity = '0';
+      setTimeout(() => {
+        if (entry.parentNode) {
+          entry.parentNode.removeChild(entry);
+        }
+      }, 300);
+    }, 5000);
+    
+    // Keep only last N messages (1 on mobile, 5 on desktop)
+    const entries = logContainer.querySelectorAll('.log-entry');
+    if (entries.length > maxMessages) {
+      const oldest = entries[0];
+      oldest.style.opacity = '0';
+      setTimeout(() => {
+        if (oldest.parentNode) {
+          oldest.parentNode.removeChild(oldest);
+        }
+      }, 300);
+    }
   }
 
   // Clean up on page unload

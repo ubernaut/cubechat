@@ -6,9 +6,14 @@ function getWebSocketServer() {
     return import.meta.env.VITE_WS_SERVER;
   }
   
-  // Auto-detect: use the same host that served the page
-  const hostname = "secretworkshop.net"
-  //return 'ws://localhost:8080';
+  // Auto-detect based on environment
+  // In dev mode (localhost), use local WebSocket server
+  // In production, use the production server
+  if (import.meta.env.DEV || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    return 'ws://localhost:8080';
+  }
+  
+  // Production: use secure WebSocket on secretworkshop.net
   return `wss://secretworkshop.net/cubechat/`;
 }
 
