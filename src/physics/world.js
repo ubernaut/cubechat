@@ -10,7 +10,7 @@ export class PhysicsWorld {
   init() {
     // Create physics world
     this.world = new CANNON.World({
-      gravity: new CANNON.Vec3(0, -70, 0) // Stronger gravity for better feel
+      gravity: new CANNON.Vec3(0, -40, 0) // Stronger gravity for better feel
     });
 
     // Configure world properties for smooth, responsive physics

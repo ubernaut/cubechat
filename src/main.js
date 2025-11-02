@@ -222,7 +222,7 @@ class CubeChat {
         // Peer stopped screen sharing - remove billboard
         this.removeRemoteBillboard(peerId);
       } else if (data.screenSharing && this.remoteBillboards.has(peerId)) {
-        // Update billboard position from network data (no physics, direct positioning)
+        // Update billboard position and orientation from network data (no physics, direct positioning)
         const billboard = this.remoteBillboards.get(peerId);
         if (billboard && billboard.mesh && data.billboardData) {
           billboard.mesh.position.set(
@@ -230,6 +230,16 @@ class CubeChat {
             data.billboardData.position.y,
             data.billboardData.position.z
           );
+          
+          // Update orientation if provided
+          if (data.billboardData.quaternion) {
+            billboard.mesh.quaternion.set(
+              data.billboardData.quaternion.x,
+              data.billboardData.quaternion.y,
+              data.billboardData.quaternion.z,
+              data.billboardData.quaternion.w
+            );
+          }
         }
       }
 
@@ -387,13 +397,19 @@ class CubeChat {
           rotation: rotation
         };
         
-        // Include billboard position if screen sharing
+        // Include billboard position and orientation if screen sharing
         if (this.screenBillboardBody) {
           updateData.billboardData = {
             position: {
               x: this.screenBillboardBody.position.x,
               y: this.screenBillboardBody.position.y,
               z: this.screenBillboardBody.position.z
+            },
+            quaternion: {
+              x: this.screenBillboardBody.quaternion.x,
+              y: this.screenBillboardBody.quaternion.y,
+              z: this.screenBillboardBody.quaternion.z,
+              w: this.screenBillboardBody.quaternion.w
             },
             height: parseFloat(localStorage.getItem('screenHeight')) || 100,
             width: this.screenBillboard.geometry.parameters.width,

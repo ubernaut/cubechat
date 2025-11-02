@@ -590,8 +590,10 @@ export class P2PNetwork {
           if (!this.remoteScreenTrackIds) {
             this.remoteScreenTrackIds = new Map();
           }
+          const existingIds = this.remoteScreenTrackIds.get(peerId);
           this.remoteScreenTrackIds.set(peerId, new Set(message.trackIds));
-          console.log('Received screen track metadata from', peerId, message.trackIds);
+          console.log(`[${peerId}] Received screen track metadata:`, message.trackIds, 
+                     existingIds ? '(updating existing)' : '(new)');
           
           // Reclassify any existing tracks that match these IDs
           this.reclassifyTracksAsScreen(peerId, message.trackIds);
@@ -1016,25 +1018,18 @@ export class P2PNetwork {
     
     // Store screen track IDs for identification
     const screenTrackIds = screenStream.getTracks().map(t => t.id);
+    console.log('Starting screen share with original track IDs:', screenTrackIds);
     
     // Add screen tracks to all existing peer connections and renegotiate
     const screenTracks = screenStream.getTracks();
     
     for (const [peerId, pc] of this.peerConnections) {
       // Add screen track as sender
+      const addedSenders = [];
       for (const track of screenTracks) {
-        pc.addTrack(track, screenStream);
-        console.log('Added screen track to peer', peerId, '- trackId:', track.id);
-      }
-      
-      // Send screen track metadata via data channel
-      const channel = this.dataChannels.get(peerId);
-      if (channel && channel.readyState === 'open') {
-        channel.send(JSON.stringify({
-          type: 'screen_track_metadata',
-          trackIds: screenTrackIds
-        }));
-        console.log('Sent screen track metadata to', peerId, screenTrackIds);
+        const sender = pc.addTrack(track, screenStream);
+        addedSenders.push(sender);
+        console.log('Added screen track to peer', peerId, '- original trackId:', track.id);
       }
       
       // CRITICAL: Renegotiate the connection to send the new track
@@ -1048,6 +1043,26 @@ export class P2PNetwork {
           offer: offer
         });
         console.log('Sent renegotiation offer to', peerId, 'for screen track');
+        
+        // IMPORTANT: After renegotiation, get the ACTUAL track IDs that will be sent
+        // (they might be different from the original track IDs due to transcoding/processing)
+        const actualScreenTrackIds = addedSenders
+          .filter(sender => sender.track && sender.track.kind === 'video')
+          .map(sender => sender.track.id);
+        
+        console.log('Actual screen track IDs for', peerId, ':', actualScreenTrackIds);
+        
+        // Send screen track metadata via data channel with ACTUAL track IDs
+        const channel = this.dataChannels.get(peerId);
+        if (channel && channel.readyState === 'open') {
+          channel.send(JSON.stringify({
+            type: 'screen_track_metadata',
+            trackIds: actualScreenTrackIds
+          }));
+          console.log('Sent screen track metadata to', peerId, actualScreenTrackIds);
+        } else {
+          console.warn('Data channel not ready for', peerId, '- metadata will be sent on channel open');
+        }
       } catch (error) {
         console.error('Error renegotiating connection for screen share:', error);
       }
