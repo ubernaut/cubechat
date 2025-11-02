@@ -1,14 +1,18 @@
 import './style.css';
+import * as THREE from 'three';
 import { P2PNetwork } from './p2p/network.js';
 import { TronScene } from './renderer/scene.js';
 import { PlayerController } from './controls/input.js';
+import { PhysicsWorld } from './physics/world.js';
 
 class CubeChat {
   constructor() {
     this.network = null;
     this.scene = null;
     this.controller = null;
+    this.physics = null;
     this.remotePlayers = new Set();
+    this.lastTime = performance.now();
   }
 
   async init() {
@@ -33,6 +37,9 @@ class CubeChat {
       this.network = new P2PNetwork();
       const localPlayer = await this.network.init();
 
+      // Initialize physics world
+      this.physics = new PhysicsWorld();
+
       // Initialize Three.js scene
       const container = document.querySelector('#scene-container');
       this.scene = new TronScene(container);
@@ -44,6 +51,15 @@ class CubeChat {
         localPlayer.position
       );
       this.scene.setLocalPlayer(localPlayer.id);
+
+      // Show direction arrow for local player
+      const localPlayerMesh = this.scene.players.get(localPlayer.id);
+      if (localPlayerMesh && localPlayerMesh.userData.directionArrow) {
+        localPlayerMesh.userData.directionArrow.visible = true;
+      }
+
+      // Create physics body for local player
+      this.physics.createPlayerBody(localPlayer.id, localPlayer.position);
       
       // Apply local video stream to own cube
       if (this.network.getLocalStream()) {
@@ -118,9 +134,19 @@ class CubeChat {
       // Add new remote player if not already tracked
       if (!this.remotePlayers.has(peerId)) {
         this.scene.createPlayer(peerId, data.color, data.position);
+        this.physics.createPlayerBody(peerId, data.position);
         this.remotePlayers.add(peerId);
         console.log('New player joined:', peerId);
         this.logEvent(`Player joined: ${peerId.substring(0, 8)}...`, 'join');
+      }
+
+      // Update remote player position in physics (for collisions)
+      const physicsBody = this.physics.getPlayerBody(peerId);
+      if (physicsBody) {
+        physicsBody.position.set(data.position.x, data.position.y, data.position.z);
+        if (data.velocity) {
+          physicsBody.velocity.set(data.velocity.x, data.velocity.y, data.velocity.z);
+        }
       }
 
       // Update remote player position and rotation
@@ -133,6 +159,7 @@ class CubeChat {
       
       if (this.remotePlayers.has(peerId)) {
         this.scene.removePlayer(peerId);
+        this.physics.removePlayerBody(peerId);
         this.remotePlayers.delete(peerId);
         
         // Clean up audio element
@@ -211,30 +238,52 @@ class CubeChat {
   }
 
   startGameLoop() {
-    const gameLoop = () => {
-      // Update local player position based on input
-      const currentPos = this.scene.getLocalPlayerPosition();
+    const gameLoop = (currentTime) => {
+      // Calculate delta time
+      const deltaTime = (currentTime - this.lastTime) / 1000;
+      this.lastTime = currentTime;
+
+      // Update mobile look controls if needed
+      this.updateMobileLook();
+
+      // Get input from controller
       const rotation = this.controller.getRotation();
       const pitch = this.controller.getPitch();
       const zoom = this.controller.getZoom();
       
-      if (currentPos) {
-        const newPos = this.controller.update(currentPos);
-        
-        // Check for collisions - bounce on collision
-        if (this.scene.checkCollision && this.scene.checkCollision(newPos)) {
-          this.controller.bounce();
-        } else {
-          // Update local player in scene with rotation (Doom-style)
-          this.scene.updatePlayer(this.network.localPlayer.id, newPos, rotation);
-          
-          // Update network state
-          this.network.updateLocalPlayer({
-            position: newPos,
-            velocity: this.controller.getVelocity(),
-            rotation: rotation
-          });
+      // Apply player input to physics (pass deltaTime for frame-rate independence)
+      this.applyPlayerInput(deltaTime);
+
+      // Step physics simulation
+      this.physics.step(deltaTime);
+
+      // Sync visual representation with physics
+      this.syncPhysicsToScene();
+
+      // Stabilize player rotation (keep upright) and sync Y rotation with controller
+      this.physics.stabilizeRotation(this.network.localPlayer.id);
+      
+      // Sync physics body's Y rotation with visual rotation
+      const localPlayerMesh = this.scene.players.get(this.network.localPlayer.id);
+      if (localPlayerMesh) {
+        const body = this.physics.getPlayerBody(this.network.localPlayer.id);
+        if (body) {
+          // Set physics body rotation to match visual rotation (Y-axis only)
+          const yRotation = this.controller.getRotation();
+          body.quaternion.setFromEuler(0, yRotation, 0);
         }
+      }
+
+      // Update network with physics state
+      const physicsPos = this.physics.getPosition(this.network.localPlayer.id);
+      const physicsVel = this.physics.getVelocity(this.network.localPlayer.id);
+      
+      if (physicsPos) {
+        this.network.updateLocalPlayer({
+          position: physicsPos,
+          velocity: physicsVel,
+          rotation: rotation
+        });
       }
 
       // Render scene with current rotation, pitch, and zoom
@@ -244,7 +293,127 @@ class CubeChat {
       requestAnimationFrame(gameLoop);
     };
 
-    gameLoop();
+    gameLoop(performance.now());
+  }
+
+  applyPlayerInput(deltaTime) {
+    // Get movement input from controller
+    const forwardBack = this.getForwardBackInput();
+    const leftRight = this.getLeftRightInput();
+
+    // Apply movement force if there's input
+    if (forwardBack !== 0 || leftRight !== 0) {
+      const localPlayerMesh = this.scene.players.get(this.network.localPlayer.id);
+      if (localPlayerMesh) {
+        // Get world-space direction vectors from the cube's orientation
+        const forward = new THREE.Vector3(0, 0, -1); // Local forward is -Z
+        const right = new THREE.Vector3(1, 0, 0);    // Local right is +X
+        
+        // Transform to world space using cube's rotation
+        forward.applyQuaternion(localPlayerMesh.quaternion);
+        right.applyQuaternion(localPlayerMesh.quaternion);
+        
+        // Combine based on input
+        const direction = new THREE.Vector3();
+        direction.addScaledVector(forward, forwardBack);
+        direction.addScaledVector(right, leftRight);
+        direction.normalize();
+        
+        // Apply force along this direction
+        const forceMagnitude = 100;
+        this.physics.applyMovementForce(
+          this.network.localPlayer.id,
+          { x: direction.x, z: direction.z },
+          forceMagnitude
+        );
+      }
+    }
+
+    // Check for jump input
+    const shouldJump = this.controller.shouldJump();
+    const shouldMobileJump = this.shouldMobileJump();
+    
+    if (shouldJump || shouldMobileJump) {
+      this.physics.jump(this.network.localPlayer.id, 15);
+    }
+  }
+
+  shouldMobileJump() {
+    // For mobile, check if jump was triggered
+    if (this.controller.isMobile && this.controller.jumpTriggered) {
+      this.controller.jumpTriggered = false;
+      return true;
+    }
+    return false;
+  }
+
+  getForwardBackInput() {
+    if (this.controller.isMobile) {
+      return -this.controller.moveJoystick.y * this.controller.mobileMoveSensitivity;
+    } else {
+      let input = 0;
+      if (this.controller.keys['w'] || this.controller.keys['arrowup']) input += 1;
+      if (this.controller.keys['s'] || this.controller.keys['arrowdown']) input -= 1;
+      return input;
+    }
+  }
+
+  getLeftRightInput() {
+    if (this.controller.isMobile) {
+      return this.controller.moveJoystick.x * this.controller.mobileMoveSensitivity;
+    } else {
+      let input = 0;
+      if (this.controller.keys['a']) input -= 1;
+      if (this.controller.keys['d']) input += 1;
+      return input;
+    }
+  }
+
+  updateMobileLook() {
+    const turnSpeed = 0.05;
+    const maxPitch = Math.PI / 2 - 0.1;
+    
+    // Process mobile look joystick
+    if (this.controller.isMobile) {
+      const lookJoy = this.controller.lookJoystick;
+      
+      // Horizontal look (rotation) with sensitivity
+      if (Math.abs(lookJoy.x) > 0.1) {
+        this.controller.rotation -= lookJoy.x * this.controller.mobileLookSensitivityH;
+      }
+      
+      // Vertical look (pitch) with sensitivity
+      if (Math.abs(lookJoy.y) > 0.1) {
+        this.controller.pitch -= lookJoy.y * this.controller.mobileLookSensitivityV;
+        this.controller.pitch = Math.max(-maxPitch, Math.min(maxPitch, this.controller.pitch));
+      }
+    } else {
+      // Process keyboard rotation (arrow keys and Q/E)
+      if (this.controller.keys['arrowleft'] || this.controller.keys['q']) {
+        this.controller.rotation += turnSpeed;
+      }
+      if (this.controller.keys['arrowright'] || this.controller.keys['e']) {
+        this.controller.rotation -= turnSpeed;
+      }
+    }
+  }
+
+  syncPhysicsToScene() {
+    // Update local player
+    const localId = this.network.localPlayer.id;
+    const localPhysicsPos = this.physics.getPosition(localId);
+    
+    if (localPhysicsPos) {
+      this.scene.updatePlayer(localId, localPhysicsPos, this.controller.getRotation());
+    }
+
+    // Update remote players (sync their physics bodies with network data)
+    for (const peerId of this.remotePlayers) {
+      const remotePhysicsPos = this.physics.getPosition(peerId);
+      if (remotePhysicsPos) {
+        this.scene.updatePlayer(peerId, remotePhysicsPos);
+      }
+    }
   }
 
   initEventLog() {

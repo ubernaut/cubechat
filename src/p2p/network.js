@@ -485,7 +485,7 @@ export class P2PNetwork {
     const spread = 150; // Increased from 50 to 150 (3x farther)
     return {
       x: (Math.random() - 0.5) * spread,
-      y: 3, // Raised to sit on grid (cube is 6x6x6, so center at y=3)
+      y: 20, // Spawn high so players drop onto the plane naturally
       z: (Math.random() - 0.5) * spread
     };
   }

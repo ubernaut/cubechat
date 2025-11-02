@@ -24,6 +24,7 @@
     "@libp2p/webrtc": "^6.0.7",
     "@libp2p/websockets": "^10.0.7",
     "@multiformats/multiaddr": "^13.0.1",
+    "cannon-es": "^0.20.0",
     "libp2p": "^3.0.7",
     "three": "^0.180.0"
   }
