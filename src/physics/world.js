@@ -10,7 +10,7 @@ export class PhysicsWorld {
   init() {
     // Create physics world
     this.world = new CANNON.World({
-      gravity: new CANNON.Vec3(0, -70, 0) // Stronger gravity for better feel
+      gravity: new CANNON.Vec3(0, -40, 0) // Stronger gravity for better feel
     });
 
     // Configure world properties for smooth, responsive physics
@@ -219,5 +219,19 @@ export class PhysicsWorld {
     // Limit angular velocity to prevent spinning
     body.angularVelocity.x *= 0.8;
     body.angularVelocity.z *= 0.8;
+  }
+
+  // Create a generic box body (for screen billboards, etc.)
+  createBox(position, size, mass = 1) {
+    const shape = new CANNON.Box(new CANNON.Vec3(size.x / 2, size.y / 2, size.z / 2));
+    
+    const body = new CANNON.Body({
+      mass: mass,
+      position: new CANNON.Vec3(position.x, position.y, position.z),
+      shape: shape
+    });
+
+    this.world.addBody(body);
+    return body;
   }
 }

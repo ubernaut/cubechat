@@ -29,6 +29,12 @@ export class P2PNetwork {
     this.localStream = null;
     this.peerConnections = new Map();
     this.remoteStreams = new Map();
+    this.remoteScreenStreams = new Map(); // Store screen share streams separately
+    this.remoteCameraTracks = new Map(); // Store camera video tracks per peer
+    this.remoteScreenTracks = new Map(); // Store screen video tracks per peer
+    this.remoteAudioTracks = new Map(); // Store audio tracks per peer
+    this.remoteTrackIds = new Map(); // Track which track IDs we've seen for each peer
+    this.remoteScreenTrackIds = new Map(); // Store which track IDs are screen tracks per peer
     this.pendingIceCandidates = new Map(); // Queue ICE candidates until ready
     this.lastBroadcastState = null; // Track last broadcast state to detect changes
     this.dataChannels = new Map(); // Store data channels for each peer
@@ -37,6 +43,7 @@ export class P2PNetwork {
     this.reconnectDelay = 1000; // Start with 1 second
     this.isReconnecting = false;
     this.shouldReconnect = true;
+    this.screenStream = null; // Store screen stream for reconnections
   }
 
   async init() {
@@ -60,7 +67,9 @@ export class P2PNetwork {
       color: this.getDeterministicColor(playerId),
       velocity: { x: 0, y: 0, z: 0 },
       rotation: 0,
-      hasMedia: !!this.localStream
+      hasMedia: !!this.localStream,
+      screenSharing: false,
+      billboardData: null
     };
 
     // Connect to WebSocket server
@@ -195,25 +204,101 @@ export class P2PNetwork {
       });
     }
 
+    // Add screen share tracks if currently sharing
+    if (this.screenStream) {
+      this.screenStream.getTracks().forEach(track => {
+        pc.addTrack(track, this.screenStream);
+        console.log('Added screen track to new peer connection', peerId);
+      });
+    }
+
     // Handle incoming data channels
     pc.ondatachannel = (event) => {
       console.log('Received data channel from', peerId);
       this.setupDataChannel(peerId, event.channel);
     };
 
-    // Handle incoming tracks
+    // Handle incoming tracks with robust track type separation
     pc.ontrack = (event) => {
-      console.log('Received remote track from', peerId, event.streams[0]);
-      const stream = event.streams[0];
-      this.remoteStreams.set(peerId, stream);
+      const track = event.track;
       
-      console.log('Stream tracks:', stream.getTracks().map(t => t.kind));
+      console.log(`[${peerId}] Received ${track.kind} track:`, {
+        id: track.id,
+        label: track.label,
+        settings: track.getSettings()
+      });
       
-      this.messageHandlers.forEach(handler => handler({
-        type: 'stream_added',
-        peerId: peerId,
-        stream: stream
-      }));
+      // Initialize track ID set for this peer if not exists
+      if (!this.remoteTrackIds.has(peerId)) {
+        this.remoteTrackIds.set(peerId, new Set());
+      }
+      
+      const seenTracks = this.remoteTrackIds.get(peerId);
+      const isNewTrack = !seenTracks.has(track.id);
+      
+      if (!isNewTrack) {
+        console.log(`[${peerId}] Track ${track.id} already processed, skipping`);
+        return;
+      }
+      
+      seenTracks.add(track.id);
+      
+      // ROBUST TRACK TYPE DETECTION
+      // Determine track type based on multiple signals
+      const settings = track.getSettings();
+      const label = track.label.toLowerCase();
+      
+      let trackType = 'unknown';
+      
+      if (track.kind === 'audio') {
+        trackType = 'audio';
+      } else if (track.kind === 'video') {
+        // Check metadata first - most reliable
+        const screenTrackIds = this.remoteScreenTrackIds?.get(peerId);
+        const isInMetadata = screenTrackIds?.has(track.id);
+        
+        // Check for screen share indicators (in priority order)
+        const hasDisplaySurface = settings.displaySurface !== undefined;
+        const hasScreenLabel = label.includes('screen') || label.includes('monitor') || label.includes('window');
+        
+        if (isInMetadata) {
+          trackType = 'screen';
+          console.log(`[${peerId}] SCREEN track detected via metadata:`, track.id);
+        } else if (hasDisplaySurface) {
+          trackType = 'screen';
+          console.log(`[${peerId}] SCREEN track detected via displaySurface:`, settings.displaySurface);
+        } else if (hasScreenLabel) {
+          trackType = 'screen';
+          console.log(`[${peerId}] SCREEN track detected via label:`, track.label);
+        } else {
+          trackType = 'camera';
+          console.log(`[${peerId}] CAMERA track detected (no screen indicators)`);
+        }
+      }
+      
+      // Store track by type
+      if (trackType === 'audio') {
+        if (!this.remoteAudioTracks.has(peerId)) {
+          this.remoteAudioTracks.set(peerId, []);
+        }
+        this.remoteAudioTracks.get(peerId).push(track);
+        console.log(`[${peerId}] Stored AUDIO track`);
+      } else if (trackType === 'camera') {
+        if (!this.remoteCameraTracks.has(peerId)) {
+          this.remoteCameraTracks.set(peerId, []);
+        }
+        this.remoteCameraTracks.get(peerId).push(track);
+        console.log(`[${peerId}] Stored CAMERA track`);
+      } else if (trackType === 'screen') {
+        if (!this.remoteScreenTracks.has(peerId)) {
+          this.remoteScreenTracks.set(peerId, []);
+        }
+        this.remoteScreenTracks.get(peerId).push(track);
+        console.log(`[${peerId}] Stored SCREEN track`);
+      }
+      
+      // Rebuild streams from stored tracks
+      this.rebuildPeerStreams(peerId);
     };
 
     // Handle ICE candidates
@@ -240,9 +325,30 @@ export class P2PNetwork {
   }
 
   async handleOffer(peerId, offer) {
-    // Accept offers (we're the responder)
-    if (this.peerConnections.has(peerId)) {
-      console.log('Connection already exists for', peerId);
+    let pc = this.peerConnections.get(peerId);
+    
+    // If connection exists, this is a renegotiation
+    if (pc) {
+      console.log('Renegotiating connection with', peerId);
+      
+      try {
+        await pc.setRemoteDescription(offer);
+        
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        
+        this.send({
+          type: 'webrtc-answer',
+          peerId: this.localPlayer.id,
+          targetPeer: peerId,
+          answer: answer
+        });
+        
+        console.log('Sent renegotiation answer to', peerId);
+      } catch (error) {
+        console.error('Error handling renegotiation offer:', error);
+      }
+      
       return;
     }
     
@@ -252,7 +358,7 @@ export class P2PNetwork {
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     };
     
-    const pc = new RTCPeerConnection(config);
+    pc = new RTCPeerConnection(config);
     this.peerConnections.set(peerId, pc);
 
     // Handle incoming data channels
@@ -268,15 +374,95 @@ export class P2PNetwork {
       });
     }
 
-    // Handle incoming tracks
+    // Add screen share tracks if currently sharing
+    if (this.screenStream) {
+      this.screenStream.getTracks().forEach(track => {
+        pc.addTrack(track, this.screenStream);
+        console.log('Added screen track to new peer connection', peerId);
+      });
+    }
+
+    // Handle incoming tracks with robust track type separation
     pc.ontrack = (event) => {
-      console.log('Received remote track from', peerId);
-      this.remoteStreams.set(peerId, event.streams[0]);
-      this.messageHandlers.forEach(handler => handler({
-        type: 'stream_added',
-        peerId: peerId,
-        stream: event.streams[0]
-      }));
+      const track = event.track;
+      
+      console.log(`[${peerId}] Received ${track.kind} track:`, {
+        id: track.id,
+        label: track.label,
+        settings: track.getSettings()
+      });
+      
+      // Initialize track ID set for this peer if not exists
+      if (!this.remoteTrackIds.has(peerId)) {
+        this.remoteTrackIds.set(peerId, new Set());
+      }
+      
+      const seenTracks = this.remoteTrackIds.get(peerId);
+      const isNewTrack = !seenTracks.has(track.id);
+      
+      if (!isNewTrack) {
+        console.log(`[${peerId}] Track ${track.id} already processed, skipping`);
+        return;
+      }
+      
+      seenTracks.add(track.id);
+      
+      // ROBUST TRACK TYPE DETECTION
+      // Determine track type based on multiple signals
+      const settings = track.getSettings();
+      const label = track.label.toLowerCase();
+      
+      let trackType = 'unknown';
+      
+      if (track.kind === 'audio') {
+        trackType = 'audio';
+      } else if (track.kind === 'video') {
+        // Check metadata first - most reliable
+        const screenTrackIds = this.remoteScreenTrackIds?.get(peerId);
+        const isInMetadata = screenTrackIds?.has(track.id);
+        
+        // Check for screen share indicators (in priority order)
+        const hasDisplaySurface = settings.displaySurface !== undefined;
+        const hasScreenLabel = label.includes('screen') || label.includes('monitor') || label.includes('window');
+        
+        if (isInMetadata) {
+          trackType = 'screen';
+          console.log(`[${peerId}] SCREEN track detected via metadata:`, track.id);
+        } else if (hasDisplaySurface) {
+          trackType = 'screen';
+          console.log(`[${peerId}] SCREEN track detected via displaySurface:`, settings.displaySurface);
+        } else if (hasScreenLabel) {
+          trackType = 'screen';
+          console.log(`[${peerId}] SCREEN track detected via label:`, track.label);
+        } else {
+          trackType = 'camera';
+          console.log(`[${peerId}] CAMERA track detected (no screen indicators)`);
+        }
+      }
+      
+      // Store track by type
+      if (trackType === 'audio') {
+        if (!this.remoteAudioTracks.has(peerId)) {
+          this.remoteAudioTracks.set(peerId, []);
+        }
+        this.remoteAudioTracks.get(peerId).push(track);
+        console.log(`[${peerId}] Stored AUDIO track`);
+      } else if (trackType === 'camera') {
+        if (!this.remoteCameraTracks.has(peerId)) {
+          this.remoteCameraTracks.set(peerId, []);
+        }
+        this.remoteCameraTracks.get(peerId).push(track);
+        console.log(`[${peerId}] Stored CAMERA track`);
+      } else if (trackType === 'screen') {
+        if (!this.remoteScreenTracks.has(peerId)) {
+          this.remoteScreenTracks.set(peerId, []);
+        }
+        this.remoteScreenTracks.get(peerId).push(track);
+        console.log(`[${peerId}] Stored SCREEN track`);
+      }
+      
+      // Rebuild streams from stored tracks
+      this.rebuildPeerStreams(peerId);
     };
 
     // Handle ICE candidates
@@ -364,6 +550,16 @@ export class P2PNetwork {
 
     channel.onopen = () => {
       console.log('Data channel opened with', peerId);
+      
+      // If we're currently screen sharing, send metadata immediately
+      if (this.screenStream) {
+        const screenTrackIds = this.screenStream.getTracks().map(t => t.id);
+        channel.send(JSON.stringify({
+          type: 'screen_track_metadata',
+          trackIds: screenTrackIds
+        }));
+        console.log('Sent screen track metadata on channel open to', peerId, screenTrackIds);
+      }
     };
 
     channel.onclose = () => {
@@ -389,11 +585,105 @@ export class P2PNetwork {
             peerId: peerId,
             data: message.data
           }));
+        } else if (message.type === 'screen_track_metadata') {
+          // Store screen track IDs for this peer
+          if (!this.remoteScreenTrackIds) {
+            this.remoteScreenTrackIds = new Map();
+          }
+          const existingIds = this.remoteScreenTrackIds.get(peerId);
+          this.remoteScreenTrackIds.set(peerId, new Set(message.trackIds));
+          console.log(`[${peerId}] Received screen track metadata:`, message.trackIds, 
+                     existingIds ? '(updating existing)' : '(new)');
+          
+          // Reclassify any existing tracks that match these IDs
+          this.reclassifyTracksAsScreen(peerId, message.trackIds);
         }
       } catch (error) {
         console.error('Error parsing data channel message:', error);
       }
     };
+  }
+
+  // Reclassify tracks when we receive metadata about which are screen tracks
+  reclassifyTracksAsScreen(peerId, screenTrackIds) {
+    const cameraTracks = this.remoteCameraTracks.get(peerId) || [];
+    
+    // Move any camera tracks that are actually screen tracks
+    const tracksToMove = cameraTracks.filter(track => screenTrackIds.includes(track.id));
+    
+    if (tracksToMove.length > 0) {
+      console.log(`[${peerId}] Reclassifying ${tracksToMove.length} tracks as SCREEN tracks`);
+      
+      // Remove from camera tracks
+      const remainingCameraTracks = cameraTracks.filter(track => !screenTrackIds.includes(track.id));
+      if (remainingCameraTracks.length > 0) {
+        this.remoteCameraTracks.set(peerId, remainingCameraTracks);
+      } else {
+        this.remoteCameraTracks.delete(peerId);
+      }
+      
+      // Add to screen tracks
+      if (!this.remoteScreenTracks.has(peerId)) {
+        this.remoteScreenTracks.set(peerId, []);
+      }
+      this.remoteScreenTracks.get(peerId).push(...tracksToMove);
+      
+      // Rebuild streams with correct classification
+      this.rebuildPeerStreams(peerId);
+    }
+  }
+
+  // Rebuild camera and screen streams from stored tracks
+  rebuildPeerStreams(peerId) {
+    // Build camera stream (video + audio)
+    const cameraTracks = this.remoteCameraTracks.get(peerId) || [];
+    const audioTracks = this.remoteAudioTracks.get(peerId) || [];
+    
+    if (cameraTracks.length > 0 || audioTracks.length > 0) {
+      const allCameraTracks = [...cameraTracks, ...audioTracks];
+      const cameraStream = new MediaStream(allCameraTracks);
+      
+      // Only update if stream changed
+      const existingStream = this.remoteStreams.get(peerId);
+      const streamsMatch = existingStream && 
+        existingStream.getTracks().length === allCameraTracks.length &&
+        existingStream.getTracks().every(t => allCameraTracks.find(ct => ct.id === t.id));
+      
+      if (!streamsMatch) {
+        this.remoteStreams.set(peerId, cameraStream);
+        console.log(`[${peerId}] Built CAMERA stream with ${cameraTracks.length} video + ${audioTracks.length} audio tracks`);
+        
+        this.messageHandlers.forEach(handler => handler({
+          type: 'stream_added',
+          peerId: peerId,
+          stream: cameraStream
+        }));
+      }
+    }
+    
+    // Build screen stream (video only, no audio)
+    const screenTracks = this.remoteScreenTracks.get(peerId) || [];
+    
+    if (screenTracks.length > 0) {
+      const screenStream = new MediaStream(screenTracks);
+      
+      // Only update if stream changed
+      const existingScreenStream = this.remoteScreenStreams.get(peerId);
+      const screensMatch = existingScreenStream && 
+        existingScreenStream.getTracks().length === screenTracks.length &&
+        existingScreenStream.getTracks().every(t => screenTracks.find(st => st.id === t.id));
+      
+      if (!screensMatch) {
+        this.remoteScreenStreams.set(peerId, screenStream);
+        console.log(`[${peerId}] Built SCREEN stream with ${screenTracks.length} video tracks`);
+        
+        this.messageHandlers.forEach(handler => handler({
+          type: 'screen_stream_added',
+          peerId: peerId,
+          stream: screenStream
+        }));
+      }
+    }
   }
 
   closePeerConnection(peerId) {
@@ -410,7 +700,14 @@ export class P2PNetwork {
       this.dataChannels.delete(peerId);
     }
     
+    // Clean up all track storage
     this.remoteStreams.delete(peerId);
+    this.remoteScreenStreams.delete(peerId);
+    this.remoteCameraTracks.delete(peerId);
+    this.remoteScreenTracks.delete(peerId);
+    this.remoteAudioTracks.delete(peerId);
+    this.remoteTrackIds.delete(peerId);
+    this.remoteScreenTrackIds?.delete(peerId);
     
     // Notify handlers that stream was removed
     this.messageHandlers.forEach(handler => handler({
@@ -455,6 +752,10 @@ export class P2PNetwork {
 
   getRemoteStream(peerId) {
     return this.remoteStreams.get(peerId);
+  }
+
+  getRemoteScreenStream(peerId) {
+    return this.remoteScreenStreams.get(peerId);
   }
 
   send(message) {
@@ -707,6 +1008,93 @@ export class P2PNetwork {
         reject(error);
       }
     });
+  }
+
+  // Start screen sharing - add screen tracks to peer connections
+  async startScreenSharing(screenStream, billboardData) {
+    this.screenStream = screenStream; // Store for future connections
+    this.localPlayer.screenSharing = true;
+    this.localPlayer.billboardData = billboardData;
+    
+    // Store screen track IDs for identification
+    const screenTrackIds = screenStream.getTracks().map(t => t.id);
+    console.log('Starting screen share with original track IDs:', screenTrackIds);
+    
+    // Add screen tracks to all existing peer connections and renegotiate
+    const screenTracks = screenStream.getTracks();
+    
+    for (const [peerId, pc] of this.peerConnections) {
+      // Add screen track as sender
+      const addedSenders = [];
+      for (const track of screenTracks) {
+        const sender = pc.addTrack(track, screenStream);
+        addedSenders.push(sender);
+        console.log('Added screen track to peer', peerId, '- original trackId:', track.id);
+      }
+      
+      // CRITICAL: Renegotiate the connection to send the new track
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        this.send({
+          type: 'webrtc-offer',
+          peerId: this.localPlayer.id,
+          targetPeer: peerId,
+          offer: offer
+        });
+        console.log('Sent renegotiation offer to', peerId, 'for screen track');
+        
+        // IMPORTANT: After renegotiation, get the ACTUAL track IDs that will be sent
+        // (they might be different from the original track IDs due to transcoding/processing)
+        const actualScreenTrackIds = addedSenders
+          .filter(sender => sender.track && sender.track.kind === 'video')
+          .map(sender => sender.track.id);
+        
+        console.log('Actual screen track IDs for', peerId, ':', actualScreenTrackIds);
+        
+        // Send screen track metadata via data channel with ACTUAL track IDs
+        const channel = this.dataChannels.get(peerId);
+        if (channel && channel.readyState === 'open') {
+          channel.send(JSON.stringify({
+            type: 'screen_track_metadata',
+            trackIds: actualScreenTrackIds
+          }));
+          console.log('Sent screen track metadata to', peerId, actualScreenTrackIds);
+        } else {
+          console.warn('Data channel not ready for', peerId, '- metadata will be sent on channel open');
+        }
+      } catch (error) {
+        console.error('Error renegotiating connection for screen share:', error);
+      }
+    }
+    
+    // Broadcast updated state
+    this.broadcastPlayerState();
+  }
+
+  // Stop screen sharing - remove screen tracks from peer connections
+  stopScreenSharing() {
+    this.screenStream = null; // Clear stored stream
+    this.localPlayer.screenSharing = false;
+    this.localPlayer.billboardData = null;
+    
+    // Remove screen tracks from all peer connections
+    this.peerConnections.forEach((pc, peerId) => {
+      const senders = pc.getSenders();
+      senders.forEach(sender => {
+        // Remove tracks that are not from the local webcam stream
+        if (sender.track && this.localStream) {
+          const isWebcamTrack = this.localStream.getTracks().some(t => t.id === sender.track.id);
+          if (!isWebcamTrack) {
+            pc.removeTrack(sender);
+            console.log('Removed screen track from peer', peerId);
+          }
+        }
+      });
+    });
+    
+    // Broadcast updated state
+    this.broadcastPlayerState();
   }
 
   async stop() {

@@ -8,13 +8,14 @@ export class PlayerController {
     this.maxPitch = Math.PI / 2 - 0.1; // Limit to prevent flipping
     this.zoom = 1.0;   // Zoom level
     this.minZoom = 0.3; // Minimum zoom (closest)
-    this.maxZoom = 3.0; // Maximum zoom (farthest)
+    this.maxZoom = 30.0; // Maximum zoom (farthest) - 10x increase
     this.zoomSpeed = 0.1; // Zoom speed for mousewheel
     
     // Input sensitivities
     this.turnSpeed = 0.05; // Arrow key turn speed
     this.mouseSensitivity = 0.002; // Mouse horizontal rotation sensitivity
     this.mouseSensitivityVertical = 0.0002; // Mouse vertical look sensitivity
+    this.invertMouse = false; // Invert mouse Y-axis
     this.mobileMoveSensitivity = 1.0; // Movement joystick sensitivity
     this.mobileLookSensitivityH = 0.1; // Look joystick horizontal sensitivity
     this.mobileLookSensitivityV = 0.005; // Look joystick vertical sensitivity
@@ -366,7 +367,12 @@ export class PlayerController {
         this.rotation -= event.movementX * this.mouseSensitivity;
         
         // Vertical rotation (pitch) with separate sensitivity
-        this.pitch -= event.movementY * this.mouseSensitivityVertical;
+        // Apply invert setting: default is non-inverted (+=), invertMouse makes it inverted (-=)
+        if (this.invertMouse) {
+          this.pitch -= event.movementY * this.mouseSensitivityVertical;
+        } else {
+          this.pitch += event.movementY * this.mouseSensitivityVertical;
+        }
         
         // Clamp pitch to prevent flipping over
         this.pitch = Math.max(-this.maxPitch, Math.min(this.maxPitch, this.pitch));
@@ -452,5 +458,9 @@ export class PlayerController {
       this.jumpKeyPressed = false;
     }
     return false;
+  }
+
+  setInvertMouse(invert) {
+    this.invertMouse = invert;
   }
 }
