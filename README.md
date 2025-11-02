@@ -2,6 +2,8 @@
 
 ![CubeChat](cubechat.png)
 
+https://ubernaut.github.io/cubechat
+
 A fully-functional peer-to-peer multiplayer 3D world with integrated video chat and screen sharing. Players can move around a Tron-themed infinite grid, see and hear each other through WebRTC video/audio streams, and share their screens on virtual billboards.
 
 ## Features
