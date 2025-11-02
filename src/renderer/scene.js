@@ -217,6 +217,16 @@ export class TronScene {
     //glow.position.z = 1.4; // Offset back so front of cube sticks through
     cube.add(glow);
 
+    // Add direction arrow to show which way cube is facing
+    const arrowLength = 8;
+    const arrowDir = new THREE.Vector3(0, 0, -1); // Points forward (local -Z)
+    const arrowOrigin = new THREE.Vector3(0, 4, 0); // Above the cube
+    const arrowColor = 0xff0000; // Red
+    const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLength, arrowColor, 2, 1);
+    arrow.visible = true; // Always visible to show orientation
+    cube.add(arrow);
+    cube.userData.directionArrow = arrow;
+
     this.scene.add(cube);
     this.players.set(id, cube);
 

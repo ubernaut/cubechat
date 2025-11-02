@@ -1,27 +1,27 @@
 export class PlayerController {
   constructor() {
     this.keys = {};
-    this.maxSpeed = 12;           // Maximum movement speed (6x faster, 2x from before)
-    this.acceleration = .2;       // Acceleration rate (6x faster, 2x from before)
-    this.friction = 0.8;          // Friction coefficient (0-1, lower = more friction)
-    this.turnSpeed = 0.05;         // Arrow key turn speed
-    this.mouseSensitivity = 0.002; // Mouse horizontal rotation sensitivity
-    this.mouseSensitivityVertical = 0.0002; // Mouse vertical look sensitivity
     
-    this.velocity = { x: 0, y: 0, z: 0 };
+    // Camera controls
     this.rotation = 0; // Camera rotation around Y axis (yaw)
     this.pitch = 0;    // Camera vertical rotation (pitch)
-    this.maxPitch = Math.PI / 2 - 0.1; // Limit to prevent flipping (slightly less than 90 degrees)
-    this.zoom = 1.0;   // Zoom level (0.5 = zoomed in, 2.0 = zoomed out)
+    this.maxPitch = Math.PI / 2 - 0.1; // Limit to prevent flipping
+    this.zoom = 1.0;   // Zoom level
     this.minZoom = 0.3; // Minimum zoom (closest)
     this.maxZoom = 3.0; // Maximum zoom (farthest)
     this.zoomSpeed = 0.1; // Zoom speed for mousewheel
     
-    // Jump properties
-    this.jumpForce = 9;          // Initial jump velocity
-    this.gravity = .8 ;          // Gravity pull per frame
-    this.groundLevel = 3;          // Y position of ground (half of cube height so cube sits on ground)
-    this.isGrounded = true;        // Whether player is on ground
+    // Input sensitivities
+    this.turnSpeed = 0.05; // Arrow key turn speed
+    this.mouseSensitivity = 0.002; // Mouse horizontal rotation sensitivity
+    this.mouseSensitivityVertical = 0.0002; // Mouse vertical look sensitivity
+    this.mobileMoveSensitivity = 1.0; // Movement joystick sensitivity
+    this.mobileLookSensitivityH = 0.1; // Look joystick horizontal sensitivity
+    this.mobileLookSensitivityV = 0.1; // Look joystick vertical sensitivity
+    
+    // Jump state
+    this.jumpKeyPressed = false; // Track jump key state
+    this.jumpTriggered = false; // Track mobile jump trigger
     
     // Mobile controls
     this.isMobile = false;
@@ -128,13 +128,12 @@ export class PlayerController {
       e.preventDefault();
       e.stopPropagation();
       
-      if (touchId === null && this.isGrounded) {
+      if (touchId === null) {
         const touch = e.touches[0];
         touchId = touch.identifier;
         
-        // Trigger jump
-        this.velocity.y = this.jumpForce;
-        this.isGrounded = false;
+        // Set jump trigger flag for physics to handle
+        this.jumpTriggered = true;
         
         // Visual feedback
         button.style.background = 'rgba(0, 255, 255, 0.6)';
@@ -322,12 +321,6 @@ export class PlayerController {
     // Keyboard events
     window.addEventListener('keydown', (e) => {
       this.keys[e.key.toLowerCase()] = true;
-      
-      // Jump on spacebar
-      if (e.key === ' ' && this.isGrounded) {
-        this.velocity.y = this.jumpForce;
-        this.isGrounded = false;
-      }
     });
 
     window.addEventListener('keyup', (e) => {
@@ -402,123 +395,6 @@ export class PlayerController {
     });
   }
 
-  update(currentPosition) {
-    const newPosition = { ...currentPosition };
-    
-    // Calculate movement direction relative to camera/cube orientation
-    let forwardBack = 0;
-    let leftRight = 0;
-    
-    if (this.isMobile) {
-      // Use joysticks for mobile
-      // Move joystick: y-axis is forward/back, x-axis is strafe
-      forwardBack = -this.moveJoystick.y;  // Inverted because joystick up is negative
-      leftRight = this.moveJoystick.x;
-      
-      // Look joystick: x-axis rotates view horizontally, y-axis rotates vertically
-      if (Math.abs(this.lookJoystick.x) > 0.1) {
-        this.rotation -= this.lookJoystick.x * this.turnSpeed * 2; // Faster rotation on mobile
-      }
-      if (Math.abs(this.lookJoystick.y) > 0.1) {
-        this.pitch -= this.lookJoystick.y * this.turnSpeed * 2; // Vertical look on mobile
-        
-        // Clamp pitch to prevent flipping over
-        this.pitch = Math.max(-this.maxPitch, Math.min(this.maxPitch, this.pitch));
-      }
-    } else {
-      // Use keyboard for desktop
-      // Forward/backward (W/S and Up/Down arrows)
-      if (this.keys['w'] || this.keys['arrowup']) {
-        forwardBack = 1;  // Move forward
-      }
-      if (this.keys['s'] || this.keys['arrowdown']) {
-        forwardBack = -1; // Move backward
-      }
-      
-      // Left/right strafe
-      if (this.keys['a']) {
-        leftRight = -1;   // Strafe left
-      }
-      if (this.keys['d']) {
-        leftRight = 1;    // Strafe right
-      }
-      
-      // Apply rotation from arrow keys and Q/E (left/right only)
-      if (this.keys['arrowleft'] || this.keys['q']) {
-        this.rotation += this.turnSpeed;
-      }
-      if (this.keys['arrowright'] || this.keys['e']) {
-        this.rotation -= this.turnSpeed;
-      }
-    }
-    
-    // Apply movement relative to rotation
-    if (forwardBack !== 0 || leftRight !== 0) {
-      // Normalize diagonal movement
-      const length = Math.sqrt(forwardBack * forwardBack + leftRight * leftRight);
-      const normForward = forwardBack / length;
-      const normRight = leftRight / length;
-      
-      // Convert to world space based on current rotation
-      // Forward is -Z, Right is +X in local space
-      const cos = Math.cos(this.rotation);
-      const sin = Math.sin(this.rotation);
-      
-      // Transform local movement to world space
-      const worldX = -sin * normForward + cos * normRight;
-      const worldZ = -cos * normForward - sin * normRight;
-      
-      // Apply acceleration
-      this.velocity.x += worldX * this.acceleration;
-      this.velocity.z += worldZ * this.acceleration;
-    }
-    
-    // Apply friction
-    this.velocity.x *= this.friction;
-    this.velocity.z *= this.friction;
-    
-    // Limit max speed
-    const speed = Math.sqrt(this.velocity.x * this.velocity.x + this.velocity.z * this.velocity.z);
-    if (speed > this.maxSpeed) {
-      this.velocity.x = (this.velocity.x / speed) * this.maxSpeed;
-      this.velocity.z = (this.velocity.z / speed) * this.maxSpeed;
-    }
-    
-    // Stop if very slow
-    if (speed < 0.001) {
-      this.velocity.x = 0;
-      this.velocity.z = 0;
-    }
-    
-    // Apply jump physics
-    if (!this.isGrounded) {
-      // Apply gravity
-      this.velocity.y -= this.gravity;
-    }
-    
-    // Apply velocity to position
-    newPosition.x += this.velocity.x;
-    newPosition.y += this.velocity.y;
-    newPosition.z += this.velocity.z;
-    
-    // Check if player has landed
-    if (newPosition.y <= this.groundLevel) {
-      newPosition.y = this.groundLevel;
-      this.velocity.y = 0;
-      this.isGrounded = true;
-    }
-
-    return newPosition;
-  }
-
-  getVelocity() {
-    return {
-      x: this.velocity.x,
-      y: this.velocity.y,
-      z: this.velocity.z
-    };
-  }
-
   getRotation() {
     return this.rotation;
   }
@@ -531,21 +407,18 @@ export class PlayerController {
     return this.zoom;
   }
 
-  getSpeed() {
-    return Math.sqrt(this.velocity.x * this.velocity.x + this.velocity.z * this.velocity.z);
-  }
-
-  // Bounce effect on collision
-  bounce() {
-    this.velocity.x *= -0.5;
-    this.velocity.z *= -0.5;
-  }
-
-  // Trigger a jump programmatically (e.g., when player joins)
-  triggerJump() {
-    if (this.isGrounded) {
-      this.velocity.y = this.jumpForce;
-      this.isGrounded = false;
+  // Check if player should jump (for physics integration)
+  shouldJump() {
+    // Space key for desktop, or jump handled separately for mobile
+    if (!this.isMobile && this.keys[' ']) {
+      // Prevent repeated jumps by checking if key was just pressed
+      if (!this.jumpKeyPressed) {
+        this.jumpKeyPressed = true;
+        return true;
+      }
+    } else {
+      this.jumpKeyPressed = false;
     }
+    return false;
   }
 }
