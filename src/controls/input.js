@@ -17,7 +17,7 @@ export class PlayerController {
     this.mouseSensitivityVertical = 0.0002; // Mouse vertical look sensitivity
     this.mobileMoveSensitivity = 1.0; // Movement joystick sensitivity
     this.mobileLookSensitivityH = 0.1; // Look joystick horizontal sensitivity
-    this.mobileLookSensitivityV = 0.1; // Look joystick vertical sensitivity
+    this.mobileLookSensitivityV = 0.005; // Look joystick vertical sensitivity
     
     // Jump state
     this.jumpKeyPressed = false; // Track jump key state
@@ -124,6 +124,12 @@ export class PlayerController {
   setupJumpButtonListener(button) {
     let touchId = null;
 
+    const resetButton = () => {
+      touchId = null;
+      button.style.background = 'rgba(0, 255, 255, 0.3)';
+      button.style.transform = 'translateX(-50%) scale(1)';
+    };
+
     button.addEventListener('touchstart', (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -141,24 +147,50 @@ export class PlayerController {
       }
     });
 
-    document.addEventListener('touchend', (e) => {
+    // Attach touchend directly to button for immediate response
+    button.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
       for (let touch of e.changedTouches) {
         if (touch.identifier === touchId) {
-          touchId = null;
-          button.style.background = 'rgba(0, 255, 255, 0.3)';
-          button.style.transform = 'translateX(-50%) scale(1)';
+          resetButton();
           break;
         }
       }
     });
 
-    document.addEventListener('touchcancel', (e) => {
+    button.addEventListener('touchcancel', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
       for (let touch of e.changedTouches) {
         if (touch.identifier === touchId) {
-          touchId = null;
-          button.style.background = 'rgba(0, 255, 255, 0.3)';
-          button.style.transform = 'translateX(-50%) scale(1)';
+          resetButton();
           break;
+        }
+      }
+    });
+
+    // Global fallback in case touch moves off button
+    document.addEventListener('touchend', (e) => {
+      if (touchId !== null) {
+        for (let touch of e.changedTouches) {
+          if (touch.identifier === touchId) {
+            resetButton();
+            break;
+          }
+        }
+      }
+    });
+
+    document.addEventListener('touchcancel', (e) => {
+      if (touchId !== null) {
+        for (let touch of e.changedTouches) {
+          if (touch.identifier === touchId) {
+            resetButton();
+            break;
+          }
         }
       }
     });

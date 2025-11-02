@@ -192,21 +192,19 @@ export class TronScene {
     const glowGeometry = new THREE.BoxGeometry(7.2, 7.2, 7.2);
     const glowMaterial = new THREE.MeshBasicMaterial({
       color: color,
-      emissive: color,
-      emissiveIntensity: 1,
       transparent: true,
       opacity: 0.3
     });
     const glow = new THREE.Mesh(glowGeometry, glowMaterial);
     //glow.position.z = 1.4; // Offset back so front of cube sticks through
     cube.add(glow);
+    cube.userData.glow = glow;
 
     // Add direction arrow to show which way cube is facing
     const arrowLength = 8;
     const arrowDir = new THREE.Vector3(0, 0, -1); // Points forward (local -Z)
     const arrowOrigin = new THREE.Vector3(0, 4, 0); // Above the cube
-    const arrowColor = 0xff0000; // Red
-    const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLength, arrowColor, 2, 1);
+    const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLength, color, 2, 1);
     arrow.visible = true; // Always visible to show orientation
     cube.add(arrow);
     cube.userData.directionArrow = arrow;
@@ -351,6 +349,77 @@ export class TronScene {
       if (rotation !== null) {
         player.rotation.y = rotation;
       }
+    }
+  }
+
+  setPlayerName(id, name) {
+    const player = this.players.get(id);
+    if (!player) return;
+
+    // Remove existing name label if any
+    if (player.userData.nameLabel) {
+      player.remove(player.userData.nameLabel);
+    }
+
+    if (!name) return;
+
+    // Create canvas for text
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    canvas.width = 256;
+    canvas.height = 64;
+
+    // Draw text
+    context.fillStyle = '#ffffff';
+    context.font = 'Bold 32px Arial';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(name, 128, 32);
+
+    // Create texture from canvas
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({ map: texture });
+    const sprite = new THREE.Sprite(material);
+    
+    sprite.position.set(0, 8, 0); // Above the cube
+    sprite.scale.set(8, 2, 1);
+    
+    player.add(sprite);
+    player.userData.nameLabel = sprite;
+  }
+
+  updatePlayerColor(id, color) {
+    const player = this.players.get(id);
+    if (!player) return;
+
+    // Update cube materials (handle both MeshPhongMaterial and MeshBasicMaterial)
+    if (Array.isArray(player.material)) {
+      player.material.forEach(mat => {
+        mat.color.set(color);
+        if (mat.emissive) {
+          mat.emissive.set(color);
+        }
+      });
+    } else {
+      player.material.color.set(color);
+      if (player.material.emissive) {
+        player.material.emissive.set(color);
+      }
+    }
+
+    // Update glow using stored reference
+    if (player.userData.glow && player.userData.glow.material) {
+      player.userData.glow.material.color.set(color);
+    }
+
+    // Update light beam
+    if (player.userData.lightBeam) {
+      player.userData.lightBeam.material.color.set(color);
+    }
+
+    // Update direction arrow
+    if (player.userData.directionArrow) {
+      player.userData.directionArrow.setColor(color);
     }
   }
 

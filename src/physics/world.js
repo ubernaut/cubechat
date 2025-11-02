@@ -17,7 +17,7 @@ export class PhysicsWorld {
     this.world.broadphase = new CANNON.NaiveBroadphase();
     this.world.solver.iterations = 20; // More iterations for stability
     this.world.defaultContactMaterial.friction = 0.0001; // Very low friction for smooth movement
-    this.world.defaultContactMaterial.restitution = 0.1; // Minimal bounciness
+    this.world.defaultContactMaterial.restitution = 0.05; // Minimal bounciness
 
     // Create ground plane
     const groundBody = new CANNON.Body({
@@ -36,8 +36,8 @@ export class PhysicsWorld {
       mass: 5, // Heavier for more stable physics
       position: new CANNON.Vec3(position.x, position.y, position.z),
       shape: shape,
-      linearDamping: 0.05, // Low damping for responsive movement
-      angularDamping: 0.5, // Rotational damping to stay upright
+      linearDamping: 0.001, // Low damping for responsive movement
+      angularDamping: 0.001, // Rotational damping to stay upright
       fixedRotation: false // Allow rotation from collisions
     });
 

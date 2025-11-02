@@ -423,7 +423,7 @@ export class P2PNetwork {
   checkProximityAndManageConnections() {
     if (!this.localPlayer) return;
     
-    const MAX_VIDEO_DISTANCE = 100; // Grid squares * 10 = units
+    const MAX_VIDEO_DISTANCE = 400; // Grid squares * 10 = units
     
     this.peers.forEach((peerData, peerId) => {
       const dx = peerData.position.x - this.localPlayer.position.x;

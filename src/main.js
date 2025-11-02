@@ -13,6 +13,7 @@ class CubeChat {
     this.physics = null;
     this.remotePlayers = new Set();
     this.lastTime = performance.now();
+    this.settingsShownOnce = false;
   }
 
   async init() {
@@ -23,10 +24,30 @@ class CubeChat {
         <h1>CubeChat</h1>
         <p>Initializing P2P Network...</p>
         <p style="font-size: 0.9em; color: #00ffff;">Click to start</p>
+        <p style="font-size: 0.8em; color: #ffff00; max-width: 90%; margin: 0.5em auto;">📹 Share your voice and video to chat with other people!</p>
         <p style="font-size: 0.8em; color: #00cccc; max-width: 90%; margin: 0.5em auto;">WASD: Move | Mouse/Arrows: Look | Movement has momentum</p>
       </div>
       <div id="scene-container"></div>
       <div id="event-log"></div>
+      <div id="settings-button">⚙️</div>
+      <div id="settings-menu" style="display: none;">
+        <div id="settings-close-x">✕</div>
+        <h3>Settings</h3>
+        <label>
+          Name:
+          <input type="text" id="player-name" maxlength="20" placeholder="Anonymous">
+        </label>
+        <label>
+          Color:
+          <input type="color" id="player-color">
+        </label>
+        <label>
+          Mass:
+          <input type="number" id="player-mass" min="0.1" max="100" step="0.1" value="5">
+        </label>
+        <button id="save-settings">Save</button>
+        <button id="close-settings">Close</button>
+      </div>
     `;
 
     // Initialize event log system
@@ -69,11 +90,6 @@ class CubeChat {
       // Initialize player controller
       this.controller = new PlayerController();
 
-      // Trigger an initial jump so other players can see this player join
-      setTimeout(() => {
-        this.controller.triggerJump();
-      }, 500); // Small delay to ensure everything is initialized
-
       // Set up network message handler
       this.network.onMessage((message) => {
         this.handleNetworkMessage(message);
@@ -91,6 +107,11 @@ class CubeChat {
         loadingDiv.addEventListener('click', () => {
           loadingDiv.style.display = 'none';
           this.controller.setMobileMode(true);
+          // Show settings menu only the first time after loading screen closes
+          if (!this.settingsShownOnce) {
+            document.getElementById('settings-menu').style.display = 'block';
+            this.settingsShownOnce = true;
+          }
         });
       } else {
         // Desktop: use pointer lock
@@ -107,9 +128,19 @@ class CubeChat {
         document.addEventListener('pointerlockchange', () => {
           if (document.pointerLockElement) {
             loadingDiv.style.display = 'none';
+            // Show settings menu only the first time after loading screen closes
+            if (!this.settingsShownOnce) {
+              document.getElementById('settings-menu').style.display = 'block';
+              this.settingsShownOnce = true;
+              // Release pointer lock when showing settings
+              document.exitPointerLock();
+            }
           }
         });
       }
+
+      // Initialize settings
+      this.initSettings();
 
       // Start game loop
       this.startGameLoop();
@@ -136,8 +167,22 @@ class CubeChat {
         this.scene.createPlayer(peerId, data.color, data.position);
         this.physics.createPlayerBody(peerId, data.position);
         this.remotePlayers.add(peerId);
+        
+        // Apply name if available
+        if (data.name) {
+          this.scene.setPlayerName(peerId, data.name);
+        }
+        
         console.log('New player joined:', peerId);
-        this.logEvent(`Player joined: ${peerId.substring(0, 8)}...`, 'join');
+        this.logEvent(`Player joined: ${data.name || peerId.substring(0, 8)}...`, 'join');
+      } else {
+        // Update existing player's name and color if changed
+        if (data.name) {
+          this.scene.setPlayerName(peerId, data.name);
+        }
+        if (data.color) {
+          this.scene.updatePlayerColor(peerId, data.color);
+        }
       }
 
       // Update remote player position in physics (for collisions)
@@ -227,7 +272,7 @@ class CubeChat {
     }
 
     // Set volume based on proximity
-    const proximityRange = 100;
+    const proximityRange = 400;
     if (distance <= proximityRange) {
       const volume = 1 - (distance / proximityRange);
       audio.volume = Math.max(0, Math.min(1, volume));
@@ -319,8 +364,13 @@ class CubeChat {
         direction.addScaledVector(right, leftRight);
         direction.normalize();
         
-        // Apply force along this direction
-        const forceMagnitude = 100;
+        // Get player's mass and scale force to maintain constant acceleration
+        const body = this.physics.getPlayerBody(this.network.localPlayer.id);
+        const playerMass = body ? body.mass : 5;
+        
+        // Apply force along this direction (scaled by mass for constant acceleration)
+        const baseAcceleration = 20; // Base acceleration constant
+        const forceMagnitude = baseAcceleration * playerMass;
         this.physics.applyMovementForce(
           this.network.localPlayer.id,
           { x: direction.x, z: direction.z },
@@ -498,6 +548,98 @@ class CubeChat {
         }
       }, 300);
     }
+  }
+
+  initSettings() {
+    const settingsButton = document.getElementById('settings-button');
+    const settingsMenu = document.getElementById('settings-menu');
+    const saveButton = document.getElementById('save-settings');
+    const closeButton = document.getElementById('close-settings');
+    const closeX = document.getElementById('settings-close-x');
+    const nameInput = document.getElementById('player-name');
+    const colorInput = document.getElementById('player-color');
+    const massInput = document.getElementById('player-mass');
+
+    // Load saved settings
+    const savedName = localStorage.getItem('playerName') || '';
+    const savedColor = localStorage.getItem('playerColor') || this.network.localPlayer.color;
+    const savedMass = parseFloat(localStorage.getItem('playerMass')) || 5;
+    
+    nameInput.value = savedName;
+    colorInput.value = savedColor;
+    massInput.value = savedMass;
+    
+    // Apply saved settings
+    if (savedName) {
+      this.network.localPlayer.name = savedName;
+      this.scene.setPlayerName(this.network.localPlayer.id, savedName);
+    }
+    if (savedColor !== this.network.localPlayer.color) {
+      this.network.localPlayer.color = savedColor;
+      this.scene.updatePlayerColor(this.network.localPlayer.id, savedColor);
+    }
+    // Apply saved mass
+    const body = this.physics.getPlayerBody(this.network.localPlayer.id);
+    if (body) {
+      body.mass = savedMass;
+      body.updateMassProperties();
+    }
+
+    // Toggle settings menu
+    settingsButton.addEventListener('click', () => {
+      const isShowing = settingsMenu.style.display === 'none';
+      settingsMenu.style.display = isShowing ? 'block' : 'none';
+      
+      // Release pointer lock when showing settings
+      if (isShowing && document.pointerLockElement) {
+        document.exitPointerLock();
+      }
+    });
+
+    // Close settings with button
+    closeButton.addEventListener('click', () => {
+      settingsMenu.style.display = 'none';
+    });
+
+    // Close settings with X
+    closeX.addEventListener('click', () => {
+      settingsMenu.style.display = 'none';
+    });
+
+    // Save settings
+    saveButton.addEventListener('click', () => {
+      const newName = nameInput.value.trim();
+      const newColor = colorInput.value;
+      const newMass = parseFloat(massInput.value) || 1;
+      
+      // Update local player
+      this.network.localPlayer.name = newName;
+      this.network.localPlayer.color = newColor;
+      
+      // Save to localStorage
+      localStorage.setItem('playerName', newName);
+      localStorage.setItem('playerColor', newColor);
+      localStorage.setItem('playerMass', newMass.toString());
+      
+      // Update visuals
+      this.scene.updatePlayerColor(this.network.localPlayer.id, newColor);
+      this.scene.setPlayerName(this.network.localPlayer.id, newName);
+      
+      // Update physics mass
+      const body = this.physics.getPlayerBody(this.network.localPlayer.id);
+      if (body) {
+        body.mass = newMass;
+        body.updateMassProperties();
+      }
+      
+      // Broadcast updated info
+      this.network.broadcastPlayerState();
+      
+      // Close menu
+      settingsMenu.style.display = 'none';
+      
+      console.log('Settings saved:', newName, newColor, 'Mass:', newMass);
+    });
   }
 
   // Clean up on page unload
