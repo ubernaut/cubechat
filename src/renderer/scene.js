@@ -363,6 +363,10 @@ export class TronScene {
 
     if (!name) return;
 
+    // Store the name for potential color changes
+    player.userData.playerName = name;
+    player.userData.nameColor = player.userData.nameColor || '#ffffff';
+
     // Create canvas for text
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
@@ -370,7 +374,7 @@ export class TronScene {
     canvas.height = 64;
 
     // Draw text
-    context.fillStyle = '#ffffff';
+    context.fillStyle = player.userData.nameColor;
     context.font = 'Bold 32px Arial';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
@@ -386,6 +390,19 @@ export class TronScene {
     
     player.add(sprite);
     player.userData.nameLabel = sprite;
+  }
+
+  setPlayerNameColor(id, color) {
+    const player = this.players.get(id);
+    if (!player) return;
+
+    // Store the new color
+    player.userData.nameColor = color;
+
+    // Recreate the name label with the new color
+    if (player.userData.playerName) {
+      this.setPlayerName(id, player.userData.playerName);
+    }
   }
 
   updatePlayerColor(id, color) {

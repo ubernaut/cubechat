@@ -220,4 +220,18 @@ export class PhysicsWorld {
     body.angularVelocity.x *= 0.8;
     body.angularVelocity.z *= 0.8;
   }
+
+  // Create a generic box body (for screen billboards, etc.)
+  createBox(position, size, mass = 1) {
+    const shape = new CANNON.Box(new CANNON.Vec3(size.x / 2, size.y / 2, size.z / 2));
+    
+    const body = new CANNON.Body({
+      mass: mass,
+      position: new CANNON.Vec3(position.x, position.y, position.z),
+      shape: shape
+    });
+
+    this.world.addBody(body);
+    return body;
+  }
 }

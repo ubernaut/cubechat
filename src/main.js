@@ -12,8 +12,12 @@ class CubeChat {
     this.controller = null;
     this.physics = null;
     this.remotePlayers = new Set();
+    this.remoteBillboards = new Map(); // peerId -> {mesh, body, video}
     this.lastTime = performance.now();
     this.settingsShownOnce = false;
+    this.screenStream = null;
+    this.screenBillboard = null;
+    this.screenBillboardBody = null;
   }
 
   async init() {
@@ -45,6 +49,18 @@ class CubeChat {
           Mass:
           <input type="number" id="player-mass" min="0.1" max="100" step="0.1" value="5">
         </label>
+        <label>
+          Screen Height:
+          <input type="number" id="screen-height" min="10" max="1000" step="10" value="100">
+        </label>
+        <label style="display: flex; align-items: center; cursor: pointer;">
+          <input type="checkbox" id="invert-mouse" style="margin-right: 8px;">
+          Invert Mouse Y-Axis
+        </label>
+        <div style="margin-top: 10px;">
+          <button id="screen-share-toggle" style="width: 100%; margin-bottom: 5px;">Share Screen</button>
+          <div id="screen-share-status" style="font-size: 0.8em; color: #00ffff; text-align: center;"></div>
+        </div>
         <button id="save-settings">Save</button>
         <button id="close-settings">Close</button>
       </div>
@@ -159,7 +175,16 @@ class CubeChat {
   }
 
   handleNetworkMessage(message) {
-    if (message.type === 'player_update') {
+    if (message.type === 'screen_stream_added') {
+      // Screen share stream received - store it for billboard use
+      console.log('Screen share stream received from', message.peerId);
+      
+      // If billboard already exists, update it with the screen stream
+      const billboard = this.remoteBillboards.get(message.peerId);
+      if (billboard) {
+        this.updateBillboardWithScreenStream(message.peerId, message.stream);
+      }
+    } else if (message.type === 'player_update') {
       const { peerId, data } = message;
 
       // Add new remote player if not already tracked
@@ -191,6 +216,25 @@ class CubeChat {
         physicsBody.position.set(data.position.x, data.position.y, data.position.z);
         if (data.velocity) {
           physicsBody.velocity.set(data.velocity.x, data.velocity.y, data.velocity.z);
+        }
+      }
+
+      // Handle screen sharing state changes
+      if (data.screenSharing && data.billboardData && !this.remoteBillboards.has(peerId)) {
+        // Peer started screen sharing - create billboard
+        this.createRemoteBillboard(peerId, data.billboardData, data.color, data.name);
+      } else if (!data.screenSharing && this.remoteBillboards.has(peerId)) {
+        // Peer stopped screen sharing - remove billboard
+        this.removeRemoteBillboard(peerId);
+      } else if (data.screenSharing && this.remoteBillboards.has(peerId)) {
+        // Update billboard position if it exists
+        const billboard = this.remoteBillboards.get(peerId);
+        if (billboard && data.billboardData) {
+          billboard.body.position.set(
+            data.billboardData.position.x,
+            data.billboardData.position.y,
+            data.billboardData.position.z
+          );
         }
       }
 
@@ -331,6 +375,9 @@ class CubeChat {
         });
       }
 
+      // Update remote billboard proximity (for video streaming)
+      this.updateRemoteBillboardProximity();
+
       // Render scene with current rotation, pitch, and zoom
       this.scene.render(rotation, pitch, zoom);
 
@@ -464,6 +511,30 @@ class CubeChat {
         this.scene.updatePlayer(peerId, remotePhysicsPos);
       }
     }
+
+    // Update screen billboard if it exists
+    if (this.screenBillboard && this.screenBillboardBody) {
+      this.screenBillboard.position.copy(this.screenBillboardBody.position);
+      this.screenBillboard.quaternion.copy(this.screenBillboardBody.quaternion);
+    }
+
+    // Update remote billboards
+    this.remoteBillboards.forEach((billboard, peerId) => {
+      if (billboard.mesh && billboard.body) {
+        billboard.mesh.position.copy(billboard.body.position);
+        billboard.mesh.quaternion.copy(billboard.body.quaternion);
+        
+        // Update name label position
+        if (billboard.nameLabel) {
+          const labelHeight = billboard.height / 2 + 20;
+          billboard.nameLabel.position.set(
+            billboard.body.position.x,
+            billboard.body.position.y + labelHeight,
+            billboard.body.position.z
+          );
+        }
+      }
+    });
   }
 
   initEventLog() {
@@ -559,15 +630,21 @@ class CubeChat {
     const nameInput = document.getElementById('player-name');
     const colorInput = document.getElementById('player-color');
     const massInput = document.getElementById('player-mass');
+    const screenHeightInput = document.getElementById('screen-height');
+    const invertMouseInput = document.getElementById('invert-mouse');
 
     // Load saved settings
     const savedName = localStorage.getItem('playerName') || '';
     const savedColor = localStorage.getItem('playerColor') || this.network.localPlayer.color;
     const savedMass = parseFloat(localStorage.getItem('playerMass')) || 5;
+    const savedScreenHeight = parseFloat(localStorage.getItem('screenHeight')) || 100;
+    const savedInvertMouse = localStorage.getItem('invertMouse') === 'true';
     
     nameInput.value = savedName;
     colorInput.value = savedColor;
     massInput.value = savedMass;
+    screenHeightInput.value = savedScreenHeight;
+    invertMouseInput.checked = savedInvertMouse;
     
     // Apply saved settings
     if (savedName) {
@@ -584,6 +661,9 @@ class CubeChat {
       body.mass = savedMass;
       body.updateMassProperties();
     }
+    
+    // Apply saved invert mouse setting
+    this.controller.setInvertMouse(savedInvertMouse);
 
     // Toggle settings menu
     settingsButton.addEventListener('click', () => {
@@ -611,6 +691,8 @@ class CubeChat {
       const newName = nameInput.value.trim();
       const newColor = colorInput.value;
       const newMass = parseFloat(massInput.value) || 1;
+      const newScreenHeight = parseFloat(screenHeightInput.value) || 100;
+      const newInvertMouse = invertMouseInput.checked;
       
       // Update local player
       this.network.localPlayer.name = newName;
@@ -620,6 +702,8 @@ class CubeChat {
       localStorage.setItem('playerName', newName);
       localStorage.setItem('playerColor', newColor);
       localStorage.setItem('playerMass', newMass.toString());
+      localStorage.setItem('screenHeight', newScreenHeight.toString());
+      localStorage.setItem('invertMouse', newInvertMouse.toString());
       
       // Update visuals
       this.scene.updatePlayerColor(this.network.localPlayer.id, newColor);
@@ -632,6 +716,9 @@ class CubeChat {
         body.updateMassProperties();
       }
       
+      // Apply invert mouse setting
+      this.controller.setInvertMouse(newInvertMouse);
+      
       // Broadcast updated info
       this.network.broadcastPlayerState();
       
@@ -640,10 +727,333 @@ class CubeChat {
       
       console.log('Settings saved:', newName, newColor, 'Mass:', newMass);
     });
+
+    // Screen share toggle
+    const screenShareToggle = document.getElementById('screen-share-toggle');
+    const screenShareStatus = document.getElementById('screen-share-status');
+    
+    screenShareToggle.addEventListener('click', async () => {
+      if (this.screenStream) {
+        // Stop sharing
+        this.stopScreenShare();
+        screenShareToggle.textContent = 'Share Screen';
+        screenShareStatus.textContent = '';
+      } else {
+        // Start sharing
+        try {
+          await this.startScreenShare();
+          screenShareToggle.textContent = 'Stop Sharing';
+          screenShareStatus.textContent = 'Screen is being shared';
+        } catch (error) {
+          console.error('Failed to share screen:', error);
+          screenShareStatus.textContent = 'Failed to share screen';
+          screenShareStatus.style.color = '#ff6600';
+        }
+      }
+    });
+  }
+
+  async startScreenShare() {
+    try {
+      // Capture screen
+      this.screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          cursor: 'always'
+        },
+        audio: false
+      });
+
+      // Get video track to get dimensions
+      const videoTrack = this.screenStream.getVideoTracks()[0];
+      const settings = videoTrack.getSettings();
+      const aspectRatio = settings.width / settings.height;
+
+      // Get configured screen height
+      const screenHeight = parseFloat(localStorage.getItem('screenHeight')) || 100;
+
+      // Create billboard in front of player
+      const playerPos = this.scene.getLocalPlayerPosition();
+      const billboardPos = {
+        x: playerPos.x,
+        y: playerPos.y + (screenHeight / 2), // Center at half the height above ground
+        z: playerPos.z + 100 // 100 units in front
+      };
+
+      this.createScreenBillboard(billboardPos, aspectRatio);
+
+      // Notify network about screen sharing
+      const billboardData = {
+        position: billboardPos,
+        height: screenHeight,
+        width: screenHeight * aspectRatio,
+        aspectRatio: aspectRatio
+      };
+      
+      await this.network.startScreenSharing(this.screenStream, billboardData);
+
+      // Handle when user stops sharing via browser UI
+      videoTrack.onended = () => {
+        this.stopScreenShare();
+        document.getElementById('screen-share-toggle').textContent = 'Share Screen';
+        document.getElementById('screen-share-status').textContent = '';
+      };
+
+      console.log('Screen sharing started');
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  createScreenBillboard(position, aspectRatio) {
+    // Get screen height from settings
+    const height = parseFloat(localStorage.getItem('screenHeight')) || 100;
+    const width = height * aspectRatio;
+    const depth = 10;
+
+    // Create video element for texture
+    const video = document.createElement('video');
+    video.srcObject = this.screenStream;
+    video.play();
+
+    // Create video texture
+    const videoTexture = new THREE.VideoTexture(video);
+    videoTexture.minFilter = THREE.LinearFilter;
+    videoTexture.magFilter = THREE.LinearFilter;
+
+    // Create billboard geometry and material
+    const geometry = new THREE.BoxGeometry(width, height, depth);
+    const materials = [
+      new THREE.MeshBasicMaterial({ color: 0x333333 }), // right
+      new THREE.MeshBasicMaterial({ color: 0x333333 }), // left
+      new THREE.MeshBasicMaterial({ color: 0x333333 }), // top
+      new THREE.MeshBasicMaterial({ color: 0x333333 }), // bottom
+      new THREE.MeshBasicMaterial({ map: videoTexture }), // front (screen)
+      new THREE.MeshBasicMaterial({ map: videoTexture })  // back (screen)
+    ];
+
+    this.screenBillboard = new THREE.Mesh(geometry, materials);
+    this.screenBillboard.position.set(position.x, position.y, position.z);
+    this.scene.scene.add(this.screenBillboard);
+
+    // Create physics body for billboard
+    this.screenBillboardBody = this.physics.createBox(
+      { x: position.x, y: position.y, z: position.z },
+      { x: width, y: height, z: depth },
+      50 // mass
+    );
+
+    console.log(`Created screen billboard: ${width.toFixed(1)}x${height}x${depth}, aspect ratio: ${aspectRatio.toFixed(2)}`);
+  }
+
+  stopScreenShare() {
+    // Notify network that screen sharing stopped
+    if (this.network) {
+      this.network.stopScreenSharing();
+    }
+
+    if (this.screenStream) {
+      this.screenStream.getTracks().forEach(track => track.stop());
+      this.screenStream = null;
+    }
+
+    if (this.screenBillboard) {
+      // Dispose of video texture and materials
+      this.screenBillboard.material.forEach(mat => {
+        if (mat.map) {
+          mat.map.dispose();
+        }
+        mat.dispose();
+      });
+      this.screenBillboard.geometry.dispose();
+      this.scene.scene.remove(this.screenBillboard);
+      this.screenBillboard = null;
+    }
+
+    if (this.screenBillboardBody) {
+      this.physics.world.removeBody(this.screenBillboardBody);
+      this.screenBillboardBody = null;
+    }
+
+    console.log('Screen sharing stopped');
+  }
+
+  createRemoteBillboard(peerId, billboardData, ownerColor, ownerName) {
+    const { position, height, width, aspectRatio } = billboardData;
+    const depth = 10;
+
+    // Parse owner color to get RGB values
+    const colorObj = new THREE.Color(ownerColor);
+
+    // Create billboard geometry and material - initially with owner's color
+    const geometry = new THREE.BoxGeometry(width, height, depth);
+    const materials = [
+      new THREE.MeshBasicMaterial({ color: colorObj }), // right
+      new THREE.MeshBasicMaterial({ color: colorObj }), // left
+      new THREE.MeshBasicMaterial({ color: colorObj }), // top
+      new THREE.MeshBasicMaterial({ color: colorObj }), // bottom
+      new THREE.MeshBasicMaterial({ color: colorObj }), // front (will be video when in range)
+      new THREE.MeshBasicMaterial({ color: colorObj })  // back (will be video when in range)
+    ];
+
+    const mesh = new THREE.Mesh(geometry, materials);
+    mesh.position.set(position.x, position.y, position.z);
+    this.scene.scene.add(mesh);
+
+    // Create physics body for billboard
+    const body = this.physics.createBox(
+      { x: position.x, y: position.y, z: position.z },
+      { x: width, y: height, z: depth },
+      50 // mass
+    );
+
+    // Create name label above billboard
+    const labelHeight = height / 2 + 20; // 20 units above top
+    const nameLabel = this.createNameLabel(ownerName || peerId.substring(0, 8), ownerColor);
+    nameLabel.position.set(position.x, position.y + labelHeight, position.z);
+    this.scene.scene.add(nameLabel);
+
+    // Store billboard data
+    this.remoteBillboards.set(peerId, {
+      mesh,
+      body,
+      video: null,
+      nameLabel,
+      ownerColor,
+      height,
+      proximityRange: height * 5 // Video visible within 5x billboard height
+    });
+
+    // Turn owner's cube name red
+    this.scene.setPlayerNameColor(peerId, '#ff0000');
+
+    console.log(`Created remote billboard for ${peerId}: ${width.toFixed(1)}x${height}x${depth}`);
+  }
+
+  removeRemoteBillboard(peerId) {
+    const billboard = this.remoteBillboards.get(peerId);
+    if (!billboard) return;
+
+    // Clean up mesh
+    if (billboard.mesh) {
+      billboard.mesh.material.forEach(mat => {
+        if (mat.map) {
+          mat.map.dispose();
+        }
+        mat.dispose();
+      });
+      billboard.mesh.geometry.dispose();
+      this.scene.scene.remove(billboard.mesh);
+    }
+
+    // Clean up physics
+    if (billboard.body) {
+      this.physics.world.removeBody(billboard.body);
+    }
+
+    // Clean up name label
+    if (billboard.nameLabel) {
+      this.scene.scene.remove(billboard.nameLabel);
+    }
+
+    // Clean up video element
+    if (billboard.video) {
+      billboard.video.pause();
+      billboard.video.srcObject = null;
+    }
+
+    // Restore owner's cube name color
+    this.scene.setPlayerNameColor(peerId, billboard.ownerColor);
+
+    this.remoteBillboards.delete(peerId);
+    console.log(`Removed remote billboard for ${peerId}`);
+  }
+
+  createNameLabel(text, color) {
+    // Create canvas for text
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    canvas.width = 512;
+    canvas.height = 128;
+
+    // Draw text
+    context.fillStyle = '#00000088';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.font = 'Bold 60px Arial';
+    context.fillStyle = color;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(text, canvas.width / 2, canvas.height / 2);
+
+    // Create texture from canvas
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({ map: texture });
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(50, 12.5, 1); // Scale to reasonable size
+
+    return sprite;
+  }
+
+  updateRemoteBillboardProximity() {
+    const localPos = this.scene.getLocalPlayerPosition();
+    if (!localPos) return;
+
+    this.remoteBillboards.forEach((billboard, peerId) => {
+      // Calculate distance to billboard
+      const billboardPos = billboard.body.position;
+      const dx = billboardPos.x - localPos.x;
+      const dy = billboardPos.y - localPos.y;
+      const dz = billboardPos.z - localPos.z;
+      const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+      const inRange = distance <= billboard.proximityRange;
+      const stream = this.network.getRemoteScreenStream(peerId); // Use screen stream for billboards
+
+      // Update video texture based on proximity
+      if (inRange && stream && !billboard.video) {
+        // Create video element and apply to billboard
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        video.play().catch(err => console.warn('Video autoplay blocked:', err));
+        billboard.video = video;
+
+        // Create video texture
+        const videoTexture = new THREE.VideoTexture(video);
+        videoTexture.minFilter = THREE.LinearFilter;
+        videoTexture.magFilter = THREE.LinearFilter;
+
+        // Apply to front and back faces (indices 4 and 5)
+        // Set color to white to remove color filter
+        billboard.mesh.material[4].map = videoTexture;
+        billboard.mesh.material[4].color.setHex(0xffffff);
+        billboard.mesh.material[4].needsUpdate = true;
+        billboard.mesh.material[5].map = videoTexture;
+        billboard.mesh.material[5].color.setHex(0xffffff);
+        billboard.mesh.material[5].needsUpdate = true;
+
+        console.log(`Applied video texture to billboard ${peerId} (distance: ${distance.toFixed(1)})`);
+      } else if (!inRange && billboard.video) {
+        // Remove video texture, revert to color
+        billboard.video.pause();
+        billboard.video.srcObject = null;
+        billboard.video = null;
+
+        // Revert to owner's color
+        const colorObj = new THREE.Color(billboard.ownerColor);
+        billboard.mesh.material[4].map = null;
+        billboard.mesh.material[4].color = colorObj;
+        billboard.mesh.material[4].needsUpdate = true;
+        billboard.mesh.material[5].map = null;
+        billboard.mesh.material[5].color = colorObj;
+        billboard.mesh.material[5].needsUpdate = true;
+
+        console.log(`Removed video texture from billboard ${peerId} (distance: ${distance.toFixed(1)})`);
+      }
+    });
   }
 
   // Clean up on page unload
   destroy() {
+    this.stopScreenShare();
     if (this.network) {
       this.network.stop();
     }
