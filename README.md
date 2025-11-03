@@ -26,6 +26,7 @@ A fully-functional peer-to-peer multiplayer 3D world with integrated video chat 
 - **Smooth Movement**: WASD movement with rotation-relative direction
 - **Camera Controls**: Free-look camera with arrow key rotation
 - **Player Avatars**: Colored cubes with real-time video textures on their faces
+- **VR/AR Support**: Full WebXR support for immersive VR experiences
 
 ### 🎨 Visual Features
 - **Video Textures**: Player video streams rendered on cube faces
@@ -74,6 +75,12 @@ cubechat/
 ### Screen Sharing
 - **B**: Toggle screen share billboard at current location
 - **ESC**: Stop screen sharing
+
+### VR Controls (when in VR mode)
+- **Left Controller Thumbstick**: Move forward/back/left/right
+- **Right Controller Thumbstick**: Rotate view
+- **Trigger or Grip**: Jump
+- **VR Button** (bottom right): Enter/exit VR mode
 
 ## Getting Started
 
@@ -160,6 +167,7 @@ You can override the WebSocket server URL with the `VITE_WS_SERVER` environment 
 - Modern browser with WebRTC support (Chrome, Firefox, Edge, Safari)
 - Camera and microphone permissions
 - Screen sharing API support (for billboard feature)
+- WebXR support for VR/AR features (optional, for VR headsets)
 
 ## Known Limitations
 
@@ -173,8 +181,9 @@ You can override the WebSocket server URL with the `VITE_WS_SERVER` environment 
 - Text chat system
 - Avatar customization
 - Persistent world state
-- Mobile device support
-- VR/AR integration
+- Hand tracking in VR
+- Improved VR controller models
+- AR passthrough mode
 
 ## License
 

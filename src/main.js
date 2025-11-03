@@ -33,6 +33,7 @@ class CubeChat {
       </div>
       <div id="scene-container"></div>
       <div id="event-log"></div>
+      <div id="vr-button" style="display: none;">Enter VR</div>
       <div id="settings-button">⚙️</div>
       <div id="settings-menu" style="display: none;">
         <div id="settings-close-x">✕</div>
@@ -157,6 +158,9 @@ class CubeChat {
 
       // Initialize settings
       this.initSettings();
+
+      // Initialize VR
+      this.initVR();
 
       // Start game loop
       this.startGameLoop();
@@ -350,7 +354,8 @@ class CubeChat {
   }
 
   startGameLoop() {
-    const gameLoop = (currentTime) => {
+    // Use setAnimationLoop for VR compatibility
+    this.scene.renderer.setAnimationLoop((currentTime) => {
       // Calculate delta time
       const deltaTime = (currentTime - this.lastTime) / 1000;
       this.lastTime = currentTime;
@@ -425,18 +430,27 @@ class CubeChat {
 
       // Render scene with current rotation, pitch, and zoom
       this.scene.render(rotation, pitch, zoom);
-
-      // Continue loop
-      requestAnimationFrame(gameLoop);
-    };
-
-    gameLoop(performance.now());
+    });
   }
 
   applyPlayerInput(deltaTime) {
-    // Get movement input from controller
-    const forwardBack = this.getForwardBackInput();
-    const leftRight = this.getLeftRightInput();
+    // Get movement input from controller or VR
+    let forwardBack = this.getForwardBackInput();
+    let leftRight = this.getLeftRightInput();
+    let vrJump = false;
+    
+    // Override with VR input if in VR mode
+    if (this.scene.vrMode) {
+      const vrInput = this.scene.getVRControllerInput();
+      forwardBack = vrInput.movement.z;
+      leftRight = vrInput.movement.x;
+      vrJump = vrInput.jump;
+      
+      // Apply VR rotation input
+      if (Math.abs(vrInput.rotation) > 0.1) {
+        this.controller.rotation += vrInput.rotation * 0.05;
+      }
+    }
 
     // Apply movement force if there's input
     if (forwardBack !== 0 || leftRight !== 0) {
@@ -471,11 +485,11 @@ class CubeChat {
       }
     }
 
-    // Check for jump input
+    // Check for jump input (keyboard, mobile, or VR)
     const shouldJump = this.controller.shouldJump();
     const shouldMobileJump = this.shouldMobileJump();
     
-    if (shouldJump || shouldMobileJump) {
+    if (shouldJump || shouldMobileJump || vrJump) {
       this.physics.jump(this.network.localPlayer.id, 300);
     }
   }
@@ -508,6 +522,54 @@ class CubeChat {
       if (this.controller.keys['a']) input -= 1;
       if (this.controller.keys['d']) input += 1;
       return input;
+    }
+  }
+
+  initVR() {
+    const vrButton = document.getElementById('vr-button');
+    
+    // Check if WebXR is supported
+    if ('xr' in navigator) {
+      navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
+        if (supported) {
+          vrButton.style.display = 'block';
+          
+          vrButton.addEventListener('click', async () => {
+            if (!this.scene.renderer.xr.isPresenting) {
+              // Enter VR
+              try {
+                const session = await navigator.xr.requestSession('immersive-vr', {
+                  optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
+                });
+                
+                await this.scene.renderer.xr.setSession(session);
+                this.scene.enterVR();
+                vrButton.textContent = 'Exit VR';
+                
+                // Handle session end
+                session.addEventListener('end', () => {
+                  this.scene.exitVR();
+                  vrButton.textContent = 'Enter VR';
+                });
+                
+                console.log('Entered VR mode');
+              } catch (error) {
+                console.error('Failed to enter VR:', error);
+                this.logEvent('Failed to enter VR: ' + error.message, 'error');
+              }
+            } else {
+              // Exit VR
+              await this.scene.renderer.xr.getSession().end();
+            }
+          });
+        } else {
+          console.log('VR not supported on this device');
+        }
+      }).catch((error) => {
+        console.error('Error checking VR support:', error);
+      });
+    } else {
+      console.log('WebXR not available');
     }
   }
 

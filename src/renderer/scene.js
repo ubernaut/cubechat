@@ -27,11 +27,26 @@ export class TronScene {
     this.camera.position.set(0, 20, 30);
     this.camera.lookAt(0, 0, 0);
 
-    // Create renderer
+    // Create renderer with XR support
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.renderer.xr.enabled = true; // Enable WebXR
     this.container.appendChild(this.renderer.domElement);
+
+    // WebXR state
+    this.vrControllers = [];
+    this.vrControllerGrips = [];
+    this.vrMode = false;
+    this.vrPlayerOffset = new THREE.Vector3();
+    
+    // Create camera rig for VR
+    this.cameraRig = new THREE.Group();
+    this.cameraRig.add(this.camera);
+    this.scene.add(this.cameraRig);
+
+    // Setup VR controllers
+    this.setupVRControllers();
 
     // Create infinite grid
     this.createGrid();
@@ -484,8 +499,37 @@ export class TronScene {
     }
   }
 
+  updateCameraVR() {
+    // In VR mode, camera rig follows player in third-person view
+    if (this.localPlayerId && this.vrMode) {
+      const localPlayer = this.players.get(this.localPlayerId);
+      if (localPlayer) {
+        // Position camera rig behind and above player (third-person view)
+        const distance = 15; // Same as desktop camera
+        const height = 10;
+        
+        // Get player's rotation to position camera behind them
+        const playerRotation = localPlayer.rotation.y;
+        
+        // Calculate position behind player
+        this.cameraRig.position.set(
+          localPlayer.position.x + Math.sin(playerRotation) * distance,
+          localPlayer.position.y + height,
+          localPlayer.position.z + Math.cos(playerRotation) * distance
+        );
+        
+        // Rotate rig to face player
+        this.cameraRig.rotation.y = playerRotation;
+      }
+    }
+  }
+
   render(rotation = 0, pitch = 0, zoom = 1.0) {
-    this.updateCamera(rotation, pitch, zoom);
+    if (this.vrMode) {
+      this.updateCameraVR();
+    } else {
+      this.updateCamera(rotation, pitch, zoom);
+    }
     
     // Check if grid needs expansion
     const localPlayerPos = this.getLocalPlayerPosition();
@@ -494,6 +538,124 @@ export class TronScene {
     }
     
     this.renderer.render(this.scene, this.camera);
+  }
+
+  setupVRControllers() {
+    // Setup VR controllers
+    for (let i = 0; i < 2; i++) {
+      // Controller (for input)
+      const controller = this.renderer.xr.getController(i);
+      controller.userData.isSelecting = false;
+      controller.userData.isSqueezing = false;
+      
+      // Add event listeners
+      controller.addEventListener('selectstart', () => {
+        controller.userData.isSelecting = true;
+      });
+      controller.addEventListener('selectend', () => {
+        controller.userData.isSelecting = false;
+      });
+      controller.addEventListener('squeezestart', () => {
+        controller.userData.isSqueezing = true;
+      });
+      controller.addEventListener('squeezeend', () => {
+        controller.userData.isSqueezing = false;
+      });
+      
+      // Add visual ray
+      const geometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(0, 0, -1)
+      ]);
+      const line = new THREE.Line(geometry);
+      line.scale.z = 5;
+      controller.add(line);
+      
+      this.cameraRig.add(controller);
+      this.vrControllers.push(controller);
+      
+      // Controller grip (for visual model)
+      const controllerGrip = this.renderer.xr.getControllerGrip(i);
+      
+      // Add simple cube as controller model
+      const cubeGeometry = new THREE.BoxGeometry(0.05, 0.05, 0.15);
+      const cubeMaterial = new THREE.MeshPhongMaterial({ 
+        color: i === 0 ? 0xff0000 : 0x0000ff,
+        emissive: i === 0 ? 0xff0000 : 0x0000ff,
+        emissiveIntensity: 0.5
+      });
+      const cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+      controllerGrip.add(cube);
+      
+      this.cameraRig.add(controllerGrip);
+      this.vrControllerGrips.push(controllerGrip);
+    }
+  }
+
+  getVRControllerInput() {
+    if (!this.vrMode || this.vrControllers.length === 0) {
+      return { movement: { x: 0, z: 0 }, rotation: 0, jump: false };
+    }
+    
+    const input = {
+      movement: { x: 0, z: 0 },
+      rotation: 0,
+      jump: false
+    };
+    
+    // Get gamepad data from controllers
+    const session = this.renderer.xr.getSession();
+    if (session && session.inputSources) {
+      for (let i = 0; i < session.inputSources.length; i++) {
+        const inputSource = session.inputSources[i];
+        const gamepad = inputSource.gamepad;
+        
+        if (gamepad) {
+          // Debug: Log gamepad info (only log if there's actual input to avoid spam)
+          const hasInput = gamepad.axes.some(axis => Math.abs(axis) > 0.1);
+          if (hasInput && !this._lastLogTime || Date.now() - this._lastLogTime > 1000) {
+            console.log(`Controller ${inputSource.handedness}:`, 
+              `axes: [${gamepad.axes.map(a => a.toFixed(2)).join(', ')}]`,
+              `buttons: ${gamepad.buttons.length}`);
+            this._lastLogTime = Date.now();
+          }
+          
+          if (gamepad.axes.length >= 4) {
+            if (inputSource.handedness === 'left') {
+              // Left controller: movement (thumbstick at axes 2,3)
+              input.movement.x = gamepad.axes[2]; // Left/right
+              input.movement.z = -gamepad.axes[3]; // Forward/back (inverted)
+            } else if (inputSource.handedness === 'right') {
+              // Right controller: rotation (thumbstick at axes 2,3)
+              input.rotation = -gamepad.axes[2]; // Rotation (inverted)
+            }
+          }
+        }
+        
+        // Check for button presses (jump on trigger or grip)
+        const controller = this.vrControllers[i];
+        if (controller && (controller.userData.isSelecting || controller.userData.isSqueezing)) {
+          input.jump = true;
+        }
+      }
+    }
+    
+    return input;
+  }
+
+  enterVR() {
+    if (!this.renderer.xr.isPresenting) {
+      this.vrMode = true;
+      // Store the offset between camera and local player
+      const localPlayer = this.players.get(this.localPlayerId);
+      if (localPlayer) {
+        this.vrPlayerOffset.copy(this.camera.position).sub(localPlayer.position);
+      }
+    }
+  }
+
+  exitVR() {
+    this.vrMode = false;
   }
 
   onWindowResize() {
